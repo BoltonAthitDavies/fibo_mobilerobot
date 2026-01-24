@@ -1,0 +1,22 @@
+/**:
+  ros__parameters:
+    # TurtleBot3 Burger parameters
+    wheel_radius: 0.033  # meters
+    wheel_separation: 0.160  # meters
+    
+    # EKF parameters
+    process_noise_x: 0.01
+    process_noise_y: 0.01
+    process_noise_theta: 0.01
+    process_noise_v: 0.1
+    process_noise_omega: 0.1
+    
+    measurement_noise_v: 0.05
+    measurement_noise_omega: 0.02
+    
+    # Initial covariance
+    initial_cov_x: 0.1
+    initial_cov_y: 0.1
+    initial_cov_theta: 0.1
+    initial_cov_v: 0.1
+    initial_cov_omega: 0.1
