@@ -1,256 +1,271 @@
 #!/usr/bin/env python3
-"""
-EKF Odometry Fusion Node
-Fuses wheel odometry from joint_states and IMU data using Extended Kalman Filter
-"""
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Imu, JointState
-from nav_msgs.msg import Odometry
-from geometry_msgs.msg import TransformStamped, Quaternion
-import tf2_ros
 import numpy as np
 import math
-
+from sensor_msgs.msg import Imu
+from nav_msgs.msg import Odometry
+from geometry_msgs.msg import Quaternion, Twist, Vector3, Point
+from tf2_ros import TransformBroadcaster
+from geometry_msgs.msg import TransformStamped
+import tf_transformations
 
 class EKFOdometry(Node):
     def __init__(self):
-        super().__init__('ekf_odometry_node')
+        super().__init__('ekf_odometry')
         
-        # Robot parameters (Turtlebot3 Burger)
-        self.wheel_radius = 0.033  # meters
-        self.wheel_separation = 0.160  # meters
-        
-        # State vector: [x, y, theta, v, omega]
-        self.state = np.zeros(5)
-        
-        # Covariance matrix
-        self.P = np.eye(5) * 0.1
+        # EKF State: [x, y, theta, vx, vy, omega]
+        self.state = np.zeros(6)
+        self.P = np.eye(6) * 0.1  # Covariance matrix
         
         # Process noise
-        self.Q = np.diag([0.01, 0.01, 0.01, 0.1, 0.1])
+        self.Q = np.diag([0.01, 0.01, 0.01, 0.1, 0.1, 0.1])
         
         # Measurement noise
-        self.R_odom = np.diag([0.1, 0.1])  # For velocity measurements
-        self.R_imu = np.array([[0.01]])  # For angular velocity
+        self.R_odom = np.diag([0.1, 0.1, 0.05, 0.1, 0.1, 0.05])  # wheel odometry
+        self.R_imu = np.diag([0.01, 0.01, 0.005])  # IMU (ax, ay, omega)
         
-        # Previous joint states
-        self.prev_joint_positions = None
         self.prev_time = None
         
         # Subscribers
-        self.joint_sub = self.create_subscription(
-            JointState,
-            '/joint_states',
-            self.joint_callback,
-            10
-        )
+        self.wheel_odom_sub = self.create_subscription(
+            Odometry,
+            '/wheel_odom',
+            self.wheel_odom_callback,
+            10)
         
         self.imu_sub = self.create_subscription(
             Imu,
             '/imu',
             self.imu_callback,
-            10
-        )
+            10)
         
         # Publisher
-        self.odom_pub = self.create_publisher(Odometry, '/ekf_odom', 10)
+        self.ekf_odom_pub = self.create_publisher(
+            Odometry,
+            '/ekf_odom',
+            10)
         
         # TF broadcaster
-        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
+        self.tf_broadcaster = TransformBroadcaster(self)
         
-        self.get_logger().info('EKF Odometry node initialized')
-    
-    def quaternion_from_euler(self, roll, pitch, yaw):
-        """Convert Euler angles to quaternion"""
-        cy = math.cos(yaw * 0.5)
-        sy = math.sin(yaw * 0.5)
-        cp = math.cos(pitch * 0.5)
-        sp = math.sin(pitch * 0.5)
-        cr = math.cos(roll * 0.5)
-        sr = math.sin(roll * 0.5)
-        
-        q = Quaternion()
-        q.w = cr * cp * cy + sr * sp * sy
-        q.x = sr * cp * cy - cr * sp * sy
-        q.y = cr * sp * cy + sr * cp * sy
-        q.z = cr * cp * sy - sr * sp * cy
-        
-        return q
-    
+        self.get_logger().info('EKF Odometry Node Started')
+
     def predict(self, dt):
         """EKF Prediction step"""
-        x, y, theta, v, omega = self.state
+        # State transition function F
+        F = np.array([
+            [1, 0, 0, dt, 0, 0],     # x = x + vx*dt
+            [0, 1, 0, 0, dt, 0],     # y = y + vy*dt  
+            [0, 0, 1, 0, 0, dt],     # theta = theta + omega*dt
+            [0, 0, 0, 1, 0, 0],      # vx = vx
+            [0, 0, 0, 0, 1, 0],      # vy = vy
+            [0, 0, 0, 0, 0, 1]       # omega = omega
+        ])
         
-        # State prediction using motion model
-        self.state[0] += v * math.cos(theta) * dt
-        self.state[1] += v * math.sin(theta) * dt
-        self.state[2] += omega * dt
+        # Predict state
+        self.state = F @ self.state
         
         # Normalize angle
         self.state[2] = math.atan2(math.sin(self.state[2]), math.cos(self.state[2]))
         
-        # Jacobian of motion model
-        F = np.eye(5)
-        F[0, 2] = -v * math.sin(theta) * dt
-        F[0, 3] = math.cos(theta) * dt
-        F[1, 2] = v * math.cos(theta) * dt
-        F[1, 3] = math.sin(theta) * dt
-        F[2, 4] = dt
+        # Predict covariance
+        self.P = F @ self.P @ F.T + self.Q * dt
+
+    def update_wheel_odom(self, odom_msg):
+        """EKF Update step with wheel odometry"""
+        # Extract measurement [x, y, theta, vx, vy, omega]
+        x = odom_msg.pose.pose.position.x
+        y = odom_msg.pose.pose.position.y
         
-        # Covariance prediction
-        self.P = F @ self.P @ F.T + self.Q
-    
-    def update_velocity(self, v_meas, omega_meas):
-        """EKF Update step with velocity measurements"""
-        # Measurement model: z = [v, omega]
-        z = np.array([v_meas, omega_meas])
-        h = np.array([self.state[3], self.state[4]])
+        # Convert quaternion to yaw
+        quat = odom_msg.pose.pose.orientation
+        _, _, yaw = tf_transformations.euler_from_quaternion([quat.x, quat.y, quat.z, quat.w])
         
-        # Measurement Jacobian
-        H = np.zeros((2, 5))
-        H[0, 3] = 1.0
-        H[1, 4] = 1.0
+        vx = odom_msg.twist.twist.linear.x
+        vy = odom_msg.twist.twist.linear.y  
+        omega = odom_msg.twist.twist.angular.z
         
-        # Innovation
-        y = z - h
+        z_odom = np.array([x, y, yaw, vx, vy, omega])
         
-        # Innovation covariance
-        S = H @ self.P @ H.T + self.R_odom
-        
-        # Kalman gain
-        K = self.P @ H.T @ np.linalg.inv(S)
-        
-        # State update
-        self.state += K @ y
-        
-        # Covariance update
-        self.P = (np.eye(5) - K @ H) @ self.P
-    
-    def update_imu(self, omega_meas):
-        """EKF Update step with IMU angular velocity"""
-        # Measurement model: z = omega
-        z = np.array([omega_meas])
-        h = np.array([self.state[4]])
-        
-        # Measurement Jacobian
-        H = np.zeros((1, 5))
-        H[0, 4] = 1.0
+        # Measurement function (identity for wheel odometry)
+        H_odom = np.eye(6)
         
         # Innovation
-        y = z - h
+        y_innovation = z_odom - H_odom @ self.state
         
-        # Innovation covariance
-        S = H @ self.P @ H.T + self.R_imu
+        # Normalize angle difference
+        y_innovation[2] = math.atan2(math.sin(y_innovation[2]), math.cos(y_innovation[2]))
+        
+        # Innovation covariance  
+        S = H_odom @ self.P @ H_odom.T + self.R_odom
         
         # Kalman gain
-        K = self.P @ H.T @ np.linalg.inv(S)
+        K = self.P @ H_odom.T @ np.linalg.inv(S)
         
-        # State update
-        self.state += K @ y
+        # Update state
+        self.state = self.state + K @ y_innovation
         
-        # Covariance update
-        self.P = (np.eye(5) - K @ H) @ self.P
-    
-    def joint_callback(self, msg):
-        """Process joint states to compute wheel odometry"""
+        # Normalize angle
+        self.state[2] = math.atan2(math.sin(self.state[2]), math.cos(self.state[2]))
+        
+        # Update covariance
+        I = np.eye(6)
+        self.P = (I - K @ H_odom) @ self.P
+
+    def update_imu(self, imu_msg):
+        """EKF Update step with IMU"""
+        # Extract IMU measurements
+        ax = imu_msg.linear_acceleration.x
+        ay = imu_msg.linear_acceleration.y
+        omega_z = imu_msg.angular_velocity.z
+        
+        z_imu = np.array([ax, ay, omega_z])
+        
+        # Measurement function for IMU
+        # We relate accelerations to velocities derivatives and use angular velocity directly
+        H_imu = np.array([
+            [0, 0, 0, 0, 0, 0],    # ax measurement (we'll use it as velocity derivative approx)
+            [0, 0, 0, 0, 0, 0],    # ay measurement  
+            [0, 0, 0, 0, 0, 1]     # omega_z directly maps to state omega
+        ])
+        
+        # For simplicity, we mainly use the angular velocity measurement
+        # In a full implementation, we would properly model accelerometer measurements
+        z_imu_simplified = np.array([omega_z])
+        H_imu_simplified = np.array([[0, 0, 0, 0, 0, 1]])
+        R_imu_simplified = np.array([[0.005]])
+        
+        # Innovation
+        y_innovation = z_imu_simplified - H_imu_simplified @ self.state
+        
+        # Innovation covariance
+        S = H_imu_simplified @ self.P @ H_imu_simplified.T + R_imu_simplified
+        
+        # Kalman gain
+        K = self.P @ H_imu_simplified.T @ np.linalg.inv(S)
+        
+        # Update state
+        self.state = self.state + K @ y_innovation
+        
+        # Normalize angle
+        self.state[2] = math.atan2(math.sin(self.state[2]), math.cos(self.state[2]))
+        
+        # Update covariance
+        I = np.eye(6)
+        self.P = (I - K @ H_imu_simplified) @ self.P
+
+    def wheel_odom_callback(self, msg):
+        """Handle wheel odometry measurements"""
         current_time = self.get_clock().now()
         
-        if self.prev_joint_positions is None:
-            self.prev_joint_positions = msg.position
-            self.prev_time = current_time
-            return
+        if self.prev_time is not None:
+            dt = (current_time - self.prev_time).nanoseconds / 1e9
+            if dt > 0:
+                # Prediction step
+                self.predict(dt)
+                
+                # Update with wheel odometry
+                self.update_wheel_odom(msg)
+                
+                # Publish EKF result
+                self.publish_ekf_odometry(current_time)
+                self.publish_tf_transform(current_time)
         
-        # Calculate dt
-        dt = (current_time - self.prev_time).nanoseconds / 1e9
-        
-        if dt <= 0:
-            return
-        
-        # Get wheel velocities
-        # Assuming wheel_left_joint is index 0 and wheel_right_joint is index 1
-        left_vel = msg.velocity[0] if len(msg.velocity) > 0 else 0.0
-        right_vel = msg.velocity[1] if len(msg.velocity) > 1 else 0.0
-        
-        # Compute linear and angular velocities
-        v = self.wheel_radius * (right_vel + left_vel) / 2.0
-        omega = self.wheel_radius * (right_vel - left_vel) / self.wheel_separation
-        
-        # Prediction step
-        self.predict(dt)
-        
-        # Update step with wheel odometry
-        self.update_velocity(v, omega)
-        
-        # Publish odometry
-        self.publish_odometry(current_time)
-        
-        # Update previous values
-        self.prev_joint_positions = msg.position
         self.prev_time = current_time
-    
-    def imu_callback(self, msg):
-        """Process IMU data for angular velocity update"""
-        # Extract angular velocity around z-axis
-        omega_z = msg.angular_velocity.z
-        
-        # Update with IMU measurement
-        self.update_imu(omega_z)
-    
-    def publish_odometry(self, current_time):
-        """Publish odometry message and TF transform"""
-        # Create odometry message
-        odom = Odometry()
-        odom.header.stamp = current_time.to_msg()
-        odom.header.frame_id = 'odom'
-        odom.child_frame_id = 'base_link'
-        
-        # Set position
-        odom.pose.pose.position.x = self.state[0]
-        odom.pose.pose.position.y = self.state[1]
-        odom.pose.pose.position.z = 0.0
-        
-        # Set orientation
-        odom.pose.pose.orientation = self.quaternion_from_euler(0, 0, self.state[2])
-        
-        # Set velocities
-        odom.twist.twist.linear.x = self.state[3]
-        odom.twist.twist.angular.z = self.state[4]
-        
-        # Set covariance (simplified)
-        odom.pose.covariance[0] = self.P[0, 0]
-        odom.pose.covariance[7] = self.P[1, 1]
-        odom.pose.covariance[35] = self.P[2, 2]
-        
-        # Publish
-        self.odom_pub.publish(odom)
-        
-        # Broadcast TF
-        t = TransformStamped()
-        t.header.stamp = current_time.to_msg()
-        t.header.frame_id = 'odom'
-        t.child_frame_id = 'base_link'
-        t.transform.translation.x = self.state[0]
-        t.transform.translation.y = self.state[1]
-        t.transform.translation.z = 0.0
-        t.transform.rotation = self.quaternion_from_euler(0, 0, self.state[2])
-        
-        self.tf_broadcaster.sendTransform(t)
 
+    def imu_callback(self, msg):
+        """Handle IMU measurements"""
+        if self.prev_time is not None:
+            # Update with IMU data
+            self.update_imu(msg)
+
+    def publish_ekf_odometry(self, timestamp):
+        """Publish EKF odometry result"""
+        odom_msg = Odometry()
+        odom_msg.header.stamp = timestamp.to_msg()
+        odom_msg.header.frame_id = 'odom'
+        odom_msg.child_frame_id = 'base_link'
+        
+        # Position
+        odom_msg.pose.pose.position = Point(
+            x=self.state[0], 
+            y=self.state[1], 
+            z=0.0
+        )
+        
+        # Orientation
+        quaternion = tf_transformations.quaternion_from_euler(0, 0, self.state[2])
+        odom_msg.pose.pose.orientation = Quaternion(
+            x=quaternion[0],
+            y=quaternion[1],
+            z=quaternion[2],
+            w=quaternion[3]
+        )
+        
+        # Velocity
+        odom_msg.twist.twist.linear = Vector3(
+            x=self.state[3], 
+            y=self.state[4], 
+            z=0.0
+        )
+        odom_msg.twist.twist.angular = Vector3(
+            x=0.0, 
+            y=0.0, 
+            z=self.state[5]
+        )
+        
+        # Covariance from EKF
+        pose_cov = np.zeros(36)
+        pose_cov[0] = self.P[0,0]   # x
+        pose_cov[7] = self.P[1,1]   # y
+        pose_cov[35] = self.P[2,2]  # yaw
+        odom_msg.pose.covariance = pose_cov.tolist()
+        
+        twist_cov = np.zeros(36) 
+        twist_cov[0] = self.P[3,3]   # vx
+        twist_cov[7] = self.P[4,4]   # vy
+        twist_cov[35] = self.P[5,5]  # vyaw
+        odom_msg.twist.covariance = twist_cov.tolist()
+        
+        self.ekf_odom_pub.publish(odom_msg)
+
+    def publish_tf_transform(self, timestamp):
+        """Publish TF transform"""
+        transform = TransformStamped()
+        transform.header.stamp = timestamp.to_msg()
+        transform.header.frame_id = 'odom'
+        transform.child_frame_id = 'base_link_ekf'
+        
+        # Translation
+        transform.transform.translation.x = self.state[0]
+        transform.transform.translation.y = self.state[1] 
+        transform.transform.translation.z = 0.0
+        
+        # Rotation
+        quaternion = tf_transformations.quaternion_from_euler(0, 0, self.state[2])
+        transform.transform.rotation = Quaternion(
+            x=quaternion[0],
+            y=quaternion[1],
+            z=quaternion[2],
+            w=quaternion[3]
+        )
+        
+        self.tf_broadcaster.sendTransform(transform)
 
 def main(args=None):
     rclpy.init(args=args)
-    node = EKFOdometry()
+    
+    ekf_node = EKFOdometry()
     
     try:
-        rclpy.spin(node)
+        rclpy.spin(ekf_node)
     except KeyboardInterrupt:
         pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
-
+    
+    ekf_node.destroy_node()
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
