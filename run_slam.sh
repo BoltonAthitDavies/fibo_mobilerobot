@@ -21,13 +21,22 @@ source install/setup.bash
 # Function to run SLAM with a specific dataset sequence
 run_slam_sequence() {
     local sequence=$1
+    local use_rviz=${2:-false}
     echo "Running SLAM on sequence: $sequence"
     
-    echo "Step 1: Starting SLAM Toolbox..."
-    # Start SLAM in background
-    ros2 launch fra532_lab1_part3 slam.launch.py use_sim_time:=true &
-    SLAM_PID=$!
-    sleep 3
+    if [ "$use_rviz" = "true" ]; then
+        echo "Step 1: Starting SLAM Toolbox with RViz..."
+        # Start SLAM with RViz in background
+        ros2 launch fra532_lab1_part3 slam_with_rviz.launch.py use_sim_time:=true &
+        SLAM_PID=$!
+        sleep 5
+    else
+        echo "Step 1: Starting SLAM Toolbox..."
+        # Start SLAM in background
+        ros2 launch fra532_lab1_part3 slam.launch.py use_sim_time:=true &
+        SLAM_PID=$!
+        sleep 3
+    fi
     
     echo "Step 2: Starting SLAM Evaluator (for trajectory and map saving)..."
     # Start evaluator in background  
@@ -65,32 +74,41 @@ echo ""
 
 # Check command line argument
 if [ $# -eq 0 ]; then
-    echo "Usage: $0 <sequence_number>"
-    echo "Example: $0 1  (for fibo_floor3_seq00)"
-    echo "Example: $0 2  (for fibo_floor3_seq01)"  
-    echo "Example: $0 3  (for fibo_floor3_seq02)"
-    echo "Example: $0 all  (for all sequences)"
+    echo "Usage: $0 <sequence_number> [--rviz]"
+    echo "Example: $0 1         (for fibo_floor3_seq00)"
+    echo "Example: $0 2 --rviz  (for fibo_floor3_seq01 with RViz)"  
+    echo "Example: $0 3         (for fibo_floor3_seq02)"
+    echo "Example: $0 all       (for all sequences)"
+    echo "Example: $0 all --rviz (for all sequences with RViz)"
     exit 1
 fi
 
+# Parse arguments
+SEQUENCE_ARG=$1
+USE_RVIZ=false
+
+if [ "$2" = "--rviz" ] || [ "$1" = "--rviz" ]; then
+    USE_RVIZ=true
+fi
+
 # Run based on user input
-case $1 in
+case $SEQUENCE_ARG in
     1)
-        run_slam_sequence "fibo_floor3_seq00"
+        run_slam_sequence "fibo_floor3_seq00" $USE_RVIZ
         ;;
     2) 
-        run_slam_sequence "fibo_floor3_seq01"
+        run_slam_sequence "fibo_floor3_seq01" $USE_RVIZ
         ;;
     3)
-        run_slam_sequence "fibo_floor3_seq02" 
+        run_slam_sequence "fibo_floor3_seq02" $USE_RVIZ
         ;;
     all)
         echo "Running SLAM on all sequences..."
-        run_slam_sequence "fibo_floor3_seq00"
+        run_slam_sequence "fibo_floor3_seq00" $USE_RVIZ
         sleep 5
-        run_slam_sequence "fibo_floor3_seq01"
+        run_slam_sequence "fibo_floor3_seq01" $USE_RVIZ
         sleep 5
-        run_slam_sequence "fibo_floor3_seq02"
+        run_slam_sequence "fibo_floor3_seq02" $USE_RVIZ
         ;;
     *)
         echo "Invalid sequence number. Use 1, 2, 3, or 'all'"

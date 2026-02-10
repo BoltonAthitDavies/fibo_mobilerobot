@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'fra532_lab1_part3'
+package_name = 'fra532_lab1_part1'
 
 setup(
     name=package_name,
@@ -11,11 +11,11 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', [
-            'launch/slam.launch.py',
-            'launch/rviz.launch.py', 
-            'launch/slam_with_rviz.launch.py'
+            'launch/ekf_odometry.launch.py',
+            'launch/simple_wheel_odometry.launch.py',
+            'launch/wheel_odom_with_rviz.launch.py'
         ]),
-        ('share/' + package_name + '/config', ['config/slam_params.yaml']),
+        ('share/' + package_name + '/config', ['config/ekf_params.yaml']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -26,9 +26,9 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'slam_evaluator = fra532_lab1_part3.slam_evaluator:main',
-            'map_saver = fra532_lab1_part3.map_saver:main',
-            'wheel_odometry = fra532_lab1_part3.wheel_odometry:main',
+            'ekf_odometry = fra532_lab1_part1.ekf_odometry:main',
+            'simple_wheel_odometry = fra532_lab1_part1.simple_wheel_odometry:main',
+            'trajectory_logger = fra532_lab1_part1.trajectory_logger:main',
         ],
     },
 )

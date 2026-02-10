@@ -15,6 +15,10 @@ slam_toolbox:
     base_frame: base_footprint
     scan_topic: /scan
     mode: mapping #localization
+    
+    # Use odometry
+    use_odometry: true
+    use_imu: false
 
     # if you'd rather publish the pose, transform, and map separately
     # enable this, but make sure advanced_slam_toolbox_node.launch.xml

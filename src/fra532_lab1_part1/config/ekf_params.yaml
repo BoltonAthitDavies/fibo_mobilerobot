@@ -1,0 +1,42 @@
+# EKF Parameters for Part 1
+ekf_odometry:
+  ros__parameters:
+    
+    # Robot physical parameters (TurtleBot3 Burger)
+    wheel_radius: 0.033          # meters
+    wheel_separation: 0.160      # meters
+    
+    # EKF Process Noise Covariance (Q matrix)
+    process_noise:
+      position_x: 0.01           # x position process noise
+      position_y: 0.01           # y position process noise  
+      orientation: 0.1           # theta orientation process noise
+    
+    # Measurement Noise Covariance 
+    measurement_noise:
+      # Wheel odometry measurement noise (R_odom matrix)
+      wheel_odom_x: 0.1          # x measurement noise
+      wheel_odom_y: 0.1          # y measurement noise
+      wheel_odom_theta: 0.2      # theta measurement noise
+      
+      # IMU measurement noise  
+      imu_angular_velocity: 0.05 # IMU angular velocity noise
+    
+    # Initial Covariance
+    initial_covariance:
+      position: 0.1              # Initial position uncertainty
+      orientation: 0.2           # Initial orientation uncertainty
+    
+    # EKF Settings
+    prediction_frequency: 20.0   # Hz - how often to run prediction step
+    
+    # Topic names
+    topics:
+      joint_states: "/joint_states"
+      imu: "/imu"
+      output_odometry: "/ekf_odom"
+    
+    # Frame IDs
+    frames:
+      odom_frame: "odom"
+      base_frame: "base_footprint"
