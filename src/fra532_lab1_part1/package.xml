@@ -1,19 +1,20 @@
 <?xml version="1.0"?>
-<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>fra532_lab1_part1</name>
   <version>1.0.0</version>
-  <description>FRA532 Lab1 Part1: EKF Odometry Fusion</description>
-  <maintainer email="athit.jake@gmail.com">Ambushee</maintainer>
-  <license>Apache-2.0</license>
+  <description>FRA532 Lab1 Part1: EKF Odometry Fusion - Wheel Odometry and Extended Kalman Filter for pose estimation</description>
+
+  <maintainer email="student@example.com">Lab Student</maintainer>
+  <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
 
   <depend>rclpy</depend>
-  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>

@@ -2,351 +2,411 @@
 
 import rclpy
 from rclpy.node import Node
-import numpy as np
-import math
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Quaternion, Twist, Vector3, Point
+from geometry_msgs.msg import Quaternion, Twist, Pose, Point, Vector3
 from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
 import tf_transformations
+import numpy as np
+import math
+from scipy.spatial import cKDTree
 
 class ICPOdometry(Node):
+    """
+    Iterative Closest Point (ICP) odometry refinement
+    Uses laser scan matching to correct drift in wheel/EKF odometry
+    """
+    
     def __init__(self):
         super().__init__('icp_odometry')
         
         # ICP parameters
-        self.max_iterations = 50
+        self.max_iterations = 20
         self.convergence_threshold = 1e-6
-        self.max_correspondence_distance = 0.3
+        self.max_correspondence_distance = 2.0
+        self.min_scan_points = 50
         
-        # State variables
-        self.x = 0.0
-        self.y = 0.0
-        self.theta = 0.0
+        # Current state
+        self.current_pose = np.array([0.0, 0.0, 0.0])  # [x, y, theta]
+        self.current_velocity = np.array([0.0, 0.0, 0.0])  # [vx, vy, omega]
         
-        # Previous scan and odometry
-        self.prev_scan = None
-        self.prev_scan_time = None
-        self.prev_odom = None
+        # Previous scan for matching
+        self.previous_scan_points = None
+        self.previous_time = None
         
-        # Current EKF odometry for initial guess
-        self.current_ekf_odom = None
+        # Initial guess from EKF
+        self.ekf_pose = None
+        self.last_ekf_time = None
         
-        # Subscribers
+        # Publishers and subscribers
+        self.icp_odom_pub = self.create_publisher(Odometry, '/icp_odom', 10)
+        
         self.scan_sub = self.create_subscription(
-            LaserScan,
-            '/scan',
-            self.scan_callback,
-            10)
+            LaserScan, '/scan', self.scan_callback, 10)
         
         self.ekf_odom_sub = self.create_subscription(
-            Odometry,
-            '/ekf_odom',
-            self.ekf_odom_callback,
-            10)
-        
-        # Publisher
-        self.icp_odom_pub = self.create_publisher(
-            Odometry,
-            '/icp_odom',
-            10)
+            Odometry, '/ekf_odom', self.ekf_odom_callback, 10)
         
         # TF broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
         
-        self.get_logger().info('ICP Odometry Node Started')
-
-    def ekf_odom_callback(self, msg):
-        """Store current EKF odometry for initial guess"""
-        self.current_ekf_odom = msg
-
-    def scan_to_points(self, scan_msg):
-        """Convert LaserScan to 2D points"""
-        points = []
-        angle = scan_msg.angle_min
+        # Flags
+        self.initialized = False
         
+        self.get_logger().info("ICP Odometry Node Started")
+        self.get_logger().info(f"ICP params - Max iter: {self.max_iterations}, Conv threshold: {self.convergence_threshold}")
+    
+    def ekf_odom_callback(self, msg):
+        """Store EKF odometry as initial guess for ICP"""
+        
+        # Extract pose from EKF odometry
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        
+        quat = msg.pose.pose.orientation
+        _, _, theta = tf_transformations.euler_from_quaternion([quat.x, quat.y, quat.z, quat.w])
+        
+        # Store for ICP initialization
+        self.ekf_pose = np.array([x, y, theta])
+        self.last_ekf_time = self.get_clock().now()
+        
+        # Extract velocities
+        vx = msg.twist.twist.linear.x
+        vy = msg.twist.twist.linear.y  
+        omega = msg.twist.twist.angular.z
+        
+        self.current_velocity = np.array([vx, vy, omega])
+    
+    def scan_callback(self, msg):
+        """Process laser scan for ICP matching"""
+        current_time = self.get_clock().now()
+        
+        # Convert scan to cartesian points
+        scan_points = self.scan_to_cartesian(msg)
+        
+        if len(scan_points) < self.min_scan_points:
+            self.get_logger().warn(f"Insufficient scan points: {len(scan_points)}")
+            return
+        
+        if not self.initialized:
+            self.initialize_icp(scan_points, current_time)
+            return
+        
+        # Perform ICP matching
+        transformation = self.perform_icp(scan_points)
+        
+        if transformation is not None:
+            # Update pose with ICP result
+            self.update_pose_with_icp(transformation, current_time)
+            
+            # Publish ICP odometry
+            self.publish_icp_odometry(current_time)
+        
+        # Store current scan for next iteration
+        self.previous_scan_points = scan_points
+        self.previous_time = current_time
+    
+    def scan_to_cartesian(self, scan_msg):
+        """Convert laser scan to cartesian points"""
+        points = []
+        
+        angle = scan_msg.angle_min
         for i, range_val in enumerate(scan_msg.ranges):
-            if scan_msg.range_min <= range_val <= scan_msg.range_max:
-                # Convert polar to cartesian
-                x = range_val * math.cos(angle)
-                y = range_val * math.sin(angle)
-                points.append([x, y])
+            # Skip invalid measurements
+            if (range_val < scan_msg.range_min or 
+                range_val > scan_msg.range_max or 
+                math.isnan(range_val) or 
+                math.isinf(range_val)):
+                angle += scan_msg.angle_increment
+                continue
+            
+            # Convert to cartesian (in laser frame)
+            x = range_val * math.cos(angle)
+            y = range_val * math.sin(angle)
+            points.append([x, y])
             
             angle += scan_msg.angle_increment
         
         return np.array(points)
-
-    def transform_points(self, points, dx, dy, dtheta):
+    
+    def initialize_icp(self, scan_points, timestamp):
+        """Initialize ICP with first scan"""
+        
+        # Use EKF pose as initial position if available
+        if self.ekf_pose is not None:
+            self.current_pose = self.ekf_pose.copy()
+            self.get_logger().info(f"ICP initialized with EKF pose: ({self.current_pose[0]:.3f}, {self.current_pose[1]:.3f}, {self.current_pose[2]:.3f})")
+        else:
+            self.current_pose = np.array([0.0, 0.0, 0.0])
+            self.get_logger().info("ICP initialized at origin")
+        
+        self.previous_scan_points = scan_points
+        self.previous_time = timestamp
+        self.initialized = True
+        
+        # Publish initial pose
+        self.publish_icp_odometry(timestamp)
+    
+    def perform_icp(self, current_points):
+        """
+        Iterative Closest Point algorithm
+        Returns 2D transformation [dx, dy, dtheta] or None if failed
+        """
+        
+        if self.previous_scan_points is None:
+            return None
+        
+        # Use EKF odometry as initial guess for transformation
+        initial_guess = np.array([0.0, 0.0, 0.0])  # Start with no change
+        
+        if self.ekf_pose is not None and self.last_ekf_time is not None:
+            # Compute expected motion from EKF
+            dt = (self.get_clock().now() - self.last_ekf_time).nanoseconds / 1e9
+            if 0 < dt < 1.0:  # Reasonable time step
+                vx, vy, omega = self.current_velocity
+                
+                # Predict motion
+                dx_pred = vx * dt
+                dy_pred = vy * dt
+                dtheta_pred = omega * dt
+                
+                initial_guess = np.array([dx_pred, dy_pred, dtheta_pred])
+        
+        # ICP iterations
+        transformation = initial_guess.copy()
+        prev_error = float('inf')
+        
+        for iteration in range(self.max_iterations):
+            # Apply current transformation to current points
+            transformed_points = self.transform_points(current_points, transformation)
+            
+            # Find correspondences
+            correspondences, distances = self.find_correspondences(
+                transformed_points, self.previous_scan_points)
+            
+            if len(correspondences) < 10:  # Minimum required correspondences
+                self.get_logger().warn(f"ICP failed: insufficient correspondences ({len(correspondences)})")
+                return None
+            
+            # Calculate mean error
+            mean_error = np.mean(distances)
+            
+            # Check convergence
+            if abs(prev_error - mean_error) < self.convergence_threshold:
+                self.get_logger().debug(f"ICP converged after {iteration+1} iterations, error: {mean_error:.6f}")
+                break
+            
+            prev_error = mean_error
+            
+            # Compute optimal transformation using SVD
+            delta_transform = self.compute_transformation_svd(
+                current_points[correspondences[:, 0]], 
+                self.previous_scan_points[correspondences[:, 1]])
+            
+            if delta_transform is None:
+                break
+            
+            # Update transformation
+            transformation += delta_transform
+            
+            # Normalize angle
+            transformation[2] = math.atan2(math.sin(transformation[2]), math.cos(transformation[2]))
+        
+        return transformation
+    
+    def transform_points(self, points, transformation):
         """Apply 2D transformation to points"""
+        dx, dy, dtheta = transformation
+        
         cos_theta = math.cos(dtheta)
         sin_theta = math.sin(dtheta)
         
         # Rotation matrix
-        R = np.array([
-            [cos_theta, -sin_theta],
-            [sin_theta, cos_theta]
-        ])
+        R = np.array([[cos_theta, -sin_theta], 
+                      [sin_theta, cos_theta]])
         
-        # Translation
-        t = np.array([dx, dy])
+        # Apply transformation: p' = R*p + t
+        transformed = points @ R.T + np.array([dx, dy])
         
-        # Transform points: R * p + t
-        transformed_points = (R @ points.T).T + t
+        return transformed
+    
+    def find_correspondences(self, source_points, target_points):
+        """Find closest point correspondences using KD-tree"""
         
-        return transformed_points
-
-    def find_correspondences(self, source_points, target_points, max_distance):
-        """Find nearest neighbor correspondences between point clouds"""
-        correspondences = []
+        # Build KD-tree for target points
+        tree = cKDTree(target_points)
         
-        for i, source_point in enumerate(source_points):
-            min_distance = float('inf')
-            best_match = -1
-            
-            for j, target_point in enumerate(target_points):
-                distance = np.linalg.norm(source_point - target_point)
-                if distance < min_distance and distance < max_distance:
-                    min_distance = distance
-                    best_match = j
-            
-            if best_match != -1:
-                correspondences.append((i, best_match, min_distance))
+        # Find nearest neighbors
+        distances, indices = tree.query(source_points, distance_upper_bound=self.max_correspondence_distance)
         
-        return correspondences
-
-    def compute_transformation(self, source_points, target_points, correspondences):
-        """Compute optimal transformation using least squares"""
-        if len(correspondences) < 3:
-            return 0.0, 0.0, 0.0, False
+        # Filter valid correspondences
+        valid_mask = (distances < self.max_correspondence_distance) & (indices < len(target_points))
+        valid_source_idx = np.where(valid_mask)[0]
+        valid_target_idx = indices[valid_mask]
+        valid_distances = distances[valid_mask]
         
-        # Extract corresponding points
-        source_corr = []
-        target_corr = []
+        # Create correspondence pairs
+        correspondences = np.column_stack([valid_source_idx, valid_target_idx])
         
-        for src_idx, tgt_idx, _ in correspondences:
-            source_corr.append(source_points[src_idx])
-            target_corr.append(target_points[tgt_idx])
+        return correspondences, valid_distances
+    
+    def compute_transformation_svd(self, source_points, target_points):
+        """Compute optimal transformation using SVD"""
         
-        source_corr = np.array(source_corr)
-        target_corr = np.array(target_corr)
+        if len(source_points) != len(target_points) or len(source_points) < 3:
+            return None
         
-        # Compute centroids
-        source_centroid = np.mean(source_corr, axis=0)
-        target_centroid = np.mean(target_corr, axis=0)
+        # Calculate centroids
+        centroid_source = np.mean(source_points, axis=0)
+        centroid_target = np.mean(target_points, axis=0)
         
         # Center the points
-        source_centered = source_corr - source_centroid
-        target_centered = target_corr - target_centroid
+        source_centered = source_points - centroid_source
+        target_centered = target_points - centroid_target
         
-        # Compute rotation using SVD
+        # Cross-covariance matrix
         H = source_centered.T @ target_centered
-        U, S, Vt = np.linalg.svd(H)
+        
+        # SVD
+        try:
+            U, _, Vt = np.linalg.svd(H)
+        except np.linalg.LinAlgError:
+            return None
+        
+        # Rotation matrix
         R = Vt.T @ U.T
         
-        # Ensure proper rotation matrix
+        # Ensure proper rotation (det(R) = 1)
         if np.linalg.det(R) < 0:
             Vt[-1, :] *= -1
             R = Vt.T @ U.T
         
-        # Extract angle
+        # Extract rotation angle
         dtheta = math.atan2(R[1, 0], R[0, 0])
         
-        # Compute translation
-        dt = target_centroid - R @ source_centroid
-        dx, dy = dt[0], dt[1]
+        # Translation
+        t = centroid_target - R @ centroid_source
+        dx, dy = t
         
-        return dx, dy, dtheta, True
-
-    def icp_algorithm(self, source_points, target_points, initial_guess):
-        """Main ICP algorithm"""
-        dx, dy, dtheta = initial_guess
+        return np.array([dx, dy, dtheta])
+    
+    def update_pose_with_icp(self, transformation, current_time):
+        """Update robot pose using ICP transformation"""
         
-        for iteration in range(self.max_iterations):
-            # Transform source points with current estimate
-            transformed_source = self.transform_points(source_points, dx, dy, dtheta)
-            
-            # Find correspondences
-            correspondences = self.find_correspondences(
-                transformed_source, target_points, self.max_correspondence_distance)
-            
-            if len(correspondences) < 3:
-                self.get_logger().warn(f'ICP: Too few correspondences ({len(correspondences)})')
-                return dx, dy, dtheta, False
-            
-            # Compute transformation correction
-            delta_dx, delta_dy, delta_dtheta, success = self.compute_transformation(
-                transformed_source, target_points, correspondences)
-            
-            if not success:
-                return dx, dy, dtheta, False
-            
-            # Update transformation
-            prev_dx, prev_dy, prev_dtheta = dx, dy, dtheta
-            dx += delta_dx
-            dy += delta_dy
-            dtheta += delta_dtheta
-            
-            # Check convergence
-            change = math.sqrt(delta_dx**2 + delta_dy**2 + delta_dtheta**2)
-            if change < self.convergence_threshold:
-                self.get_logger().debug(f'ICP converged in {iteration+1} iterations')
-                break
+        dx, dy, dtheta = transformation
         
-        return dx, dy, dtheta, True
-
-    def get_initial_guess(self):
-        """Get initial transformation guess from EKF odometry"""
-        if self.current_ekf_odom is None or self.prev_odom is None:
-            return 0.0, 0.0, 0.0
+        # Apply transformation to current pose
+        cos_theta = math.cos(self.current_pose[2])
+        sin_theta = math.sin(self.current_pose[2])
         
-        # Extract poses
-        curr_x = self.current_ekf_odom.pose.pose.position.x
-        curr_y = self.current_ekf_odom.pose.pose.position.y
-        curr_quat = self.current_ekf_odom.pose.pose.orientation
-        _, _, curr_yaw = tf_transformations.euler_from_quaternion([
-            curr_quat.x, curr_quat.y, curr_quat.z, curr_quat.w])
+        # Transform incremental motion to global frame
+        global_dx = dx * cos_theta - dy * sin_theta
+        global_dy = dx * sin_theta + dy * cos_theta
         
-        prev_x = self.prev_odom.pose.pose.position.x
-        prev_y = self.prev_odom.pose.pose.position.y
-        prev_quat = self.prev_odom.pose.pose.orientation
-        _, _, prev_yaw = tf_transformations.euler_from_quaternion([
-            prev_quat.x, prev_quat.y, prev_quat.z, prev_quat.w])
-        
-        # Compute relative transformation
-        dx = curr_x - prev_x
-        dy = curr_y - prev_y
-        dtheta = curr_yaw - prev_yaw
+        # Update pose
+        self.current_pose[0] += global_dx
+        self.current_pose[1] += global_dy
+        self.current_pose[2] += dtheta
         
         # Normalize angle
-        dtheta = math.atan2(math.sin(dtheta), math.cos(dtheta))
+        self.current_pose[2] = math.atan2(math.sin(self.current_pose[2]), math.cos(self.current_pose[2]))
         
-        return dx, dy, dtheta
-
-    def scan_callback(self, scan_msg):
-        """Process new scan with ICP"""
-        current_time = self.get_clock().now()
+        # Update velocities based on time difference
+        if self.previous_time is not None:
+            dt = (current_time - self.previous_time).nanoseconds / 1e9
+            if dt > 0:
+                self.current_velocity[0] = global_dx / dt
+                self.current_velocity[1] = global_dy / dt
+                self.current_velocity[2] = dtheta / dt
+    
+    def publish_icp_odometry(self, timestamp):
+        """Publish ICP-refined odometry"""
         
-        # Convert scan to points
-        current_points = self.scan_to_points(scan_msg)
+        x, y, theta = self.current_pose
+        vx, vy, omega = self.current_velocity
         
-        if len(current_points) < 10:
-            self.get_logger().warn('Too few valid scan points')
-            return
-        
-        if self.prev_scan is not None:
-            # Get initial transformation guess
-            initial_guess = self.get_initial_guess()
-            
-            # Run ICP
-            dx, dy, dtheta, success = self.icp_algorithm(
-                current_points, self.prev_scan, initial_guess)
-            
-            if success:
-                # Update pose
-                cos_theta = math.cos(self.theta)
-                sin_theta = math.sin(self.theta)
-                
-                # Transform relative motion to global frame
-                global_dx = cos_theta * dx - sin_theta * dy
-                global_dy = sin_theta * dx + cos_theta * dy
-                
-                self.x += global_dx
-                self.y += global_dy
-                self.theta += dtheta
-                
-                # Normalize angle
-                self.theta = math.atan2(math.sin(self.theta), math.cos(self.theta))
-                
-                # Calculate velocities
-                dt = (current_time - self.prev_scan_time).nanoseconds / 1e9
-                if dt > 0:
-                    linear_vel = math.sqrt(global_dx**2 + global_dy**2) / dt
-                    angular_vel = dtheta / dt
-                else:
-                    linear_vel = 0.0
-                    angular_vel = 0.0
-                
-                # Publish results
-                self.publish_icp_odometry(current_time, linear_vel, angular_vel)
-                self.publish_tf_transform(current_time)
-            
-            else:
-                self.get_logger().warn('ICP failed to converge')
-        
-        # Store current scan for next iteration
-        self.prev_scan = current_points
-        self.prev_scan_time = current_time
-        self.prev_odom = self.current_ekf_odom
-
-    def publish_icp_odometry(self, timestamp, linear_vel, angular_vel):
-        """Publish ICP odometry result"""
-        odom_msg = Odometry()
-        odom_msg.header.stamp = timestamp.to_msg()
-        odom_msg.header.frame_id = 'odom'
-        odom_msg.child_frame_id = 'base_link'
+        # Create odometry message
+        odom = Odometry()
+        odom.header.stamp = timestamp.to_msg()
+        odom.header.frame_id = 'odom'
+        odom.child_frame_id = 'base_link'
         
         # Position
-        odom_msg.pose.pose.position = Point(x=self.x, y=self.y, z=0.0)
+        odom.pose.pose.position = Point(x=x, y=y, z=0.0)
         
         # Orientation
-        quaternion = tf_transformations.quaternion_from_euler(0, 0, self.theta)
-        odom_msg.pose.pose.orientation = Quaternion(
-            x=quaternion[0],
-            y=quaternion[1],
-            z=quaternion[2],
-            w=quaternion[3]
-        )
+        quat = tf_transformations.quaternion_from_euler(0, 0, theta)
+        odom.pose.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
         
-        # Velocity
-        odom_msg.twist.twist.linear = Vector3(x=linear_vel, y=0.0, z=0.0)
-        odom_msg.twist.twist.angular = Vector3(x=0.0, y=0.0, z=angular_vel)
+        # Velocities
+        odom.twist.twist.linear = Vector3(x=vx, y=vy, z=0.0)
+        odom.twist.twist.angular = Vector3(x=0.0, y=0.0, z=omega)
         
-        # Covariance (estimated from ICP uncertainty)
-        odom_msg.pose.covariance[0] = 0.05   # x
-        odom_msg.pose.covariance[7] = 0.05   # y
-        odom_msg.pose.covariance[35] = 0.02  # yaw
+        # Covariance (lower uncertainty than wheel/EKF due to scan matching)
+        pose_cov = np.zeros(36)
+        twist_cov = np.zeros(36)
         
-        odom_msg.twist.covariance[0] = 0.05   # vx
-        odom_msg.twist.covariance[35] = 0.02  # vyaw
+        # Lower covariance values (higher confidence)
+        pose_cov[0] = 0.01   # x variance
+        pose_cov[7] = 0.01   # y variance
+        pose_cov[35] = 0.05  # yaw variance
         
-        self.icp_odom_pub.publish(odom_msg)
+        twist_cov[0] = 0.01   # vx variance
+        twist_cov[7] = 0.01   # vy variance  
+        twist_cov[35] = 0.05  # omega variance
+        
+        # High uncertainty for unused DOFs
+        pose_cov[14] = 1e6  # z
+        pose_cov[21] = 1e6  # roll
+        pose_cov[28] = 1e6  # pitch
+        
+        twist_cov[14] = 1e6  # vz
+        twist_cov[21] = 1e6  # angular x
+        twist_cov[28] = 1e6  # angular y
+        
+        odom.pose.covariance = pose_cov.tolist()
+        odom.twist.covariance = twist_cov.tolist()
+        
+        # Publish
+        self.icp_odom_pub.publish(odom)
+        
+        # Broadcast transform
+        self.broadcast_transform(timestamp, x, y, theta)
+    
+    def broadcast_transform(self, timestamp, x, y, theta):
+        """Broadcast ICP odom -> base_link transform"""
+        t = TransformStamped()
+        t.header.stamp = timestamp.to_msg()
+        t.header.frame_id = 'odom_icp'
+        t.child_frame_id = 'base_link_icp'
+        
+        t.transform.translation.x = x
+        t.transform.translation.y = y
+        t.transform.translation.z = 0.0
+        
+        quat = tf_transformations.quaternion_from_euler(0, 0, theta)
+        t.transform.rotation.x = quat[0]
+        t.transform.rotation.y = quat[1]
+        t.transform.rotation.z = quat[2]
+        t.transform.rotation.w = quat[3]
+        
+        self.tf_broadcaster.sendTransform(t)
 
-    def publish_tf_transform(self, timestamp):
-        """Publish TF transform"""
-        transform = TransformStamped()
-        transform.header.stamp = timestamp.to_msg()
-        transform.header.frame_id = 'odom'
-        transform.child_frame_id = 'base_link_icp'
-        
-        # Translation
-        transform.transform.translation.x = self.x
-        transform.transform.translation.y = self.y
-        transform.transform.translation.z = 0.0
-        
-        # Rotation
-        quaternion = tf_transformations.quaternion_from_euler(0, 0, self.theta)
-        transform.transform.rotation = Quaternion(
-            x=quaternion[0],
-            y=quaternion[1],
-            z=quaternion[2],
-            w=quaternion[3]
-        )
-        
-        self.tf_broadcaster.sendTransform(transform)
 
 def main(args=None):
     rclpy.init(args=args)
     
-    icp_node = ICPOdometry()
+    icp_odom = ICPOdometry()
     
     try:
-        rclpy.spin(icp_node)
+        rclpy.spin(icp_odom)
     except KeyboardInterrupt:
         pass
-    
-    icp_node.destroy_node()
-    rclpy.shutdown()
+    finally:
+        icp_odom.destroy_node()
+        rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

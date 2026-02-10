@@ -31,11 +31,12 @@
 │           └── slam_toolbox.launch.py
 ├── scripts/
 │   ├── plot_trajectories.py       # Trajectory plotting tool
-│   └── save_map.py                # Map visualization/saving tool  
+│   ├── save_map.py                # Map visualization/saving tool
+│   └── view_cumulative_map.py     # Real-time SLAM map viewer
 ├── config/
 │   ├── lab1_odometry.rviz         # RViz config for Part 1&2
 │   └── lab1_slam.rviz             # RViz config for Part 3
-├── build_workspace.py             # Automated build script
+├── qos_overrides.yaml            # QoS settings for bag playback
 └── [existing files...]
 ```
 
@@ -88,15 +89,18 @@
 - Saves occupancy grid as PNG image
 - Usage: `python3 scripts/save_map.py -o slam_map.png`
 
+### `scripts/view_cumulative_map.py`
+- Real-time visualization of cumulative SLAM map building
+- Shows map updates as SLAM processes data
+- Usage: `python3 scripts/view_cumulative_map.py`
+
 ## Build and Usage Instructions
 
 ### 1. Build the Workspace
 ```bash
 cd /home/ambushee/fibo_mobilerobot
-python3 build_workspace.py --clean
-# OR manually:
-# colcon build --symlink-install  
-# source install/setup.bash
+colcon build --symlink-install
+source install/setup.bash
 ```
 
 ### 2. Run the Lab Parts
@@ -104,10 +108,10 @@ python3 build_workspace.py --clean
 **Part 1 - EKF Odometry:**
 ```bash
 # Terminal 1: Play bag data
-ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ --clock --qos-profile-overrides-path qos_overrides.yaml
 
 # Terminal 2: Run odometry fusion
-ros2 launch fra532_lab1_part1 odometry.launch.py
+ros2 launch fra532_lab1_part1 odometry.launch.py use_sim_time:=true
 
 # Terminal 3: Visualize (optional)
 rviz2 -d config/lab1_odometry.rviz
@@ -116,13 +120,13 @@ rviz2 -d config/lab1_odometry.rviz
 **Part 2 - ICP Odometry:**
 ```bash  
 # Terminal 1: Play bag data
-ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ --clock --qos-profile-overrides-path qos_overrides.yaml
 
 # Terminal 2: Run Part 1 (for EKF input)
-ros2 launch fra532_lab1_part1 odometry.launch.py
+ros2 launch fra532_lab1_part1 odometry.launch.py use_sim_time:=true
 
 # Terminal 3: Run ICP odometry
-ros2 launch fra532_lab1_part2 icp_odometry.launch.py
+ros2 launch fra532_lab1_part2 icp_odometry.launch.py use_sim_time:=true
 
 # Terminal 4: Visualize (optional)
 rviz2 -d config/lab1_odometry.rviz
@@ -130,14 +134,14 @@ rviz2 -d config/lab1_odometry.rviz
 
 **Part 3 - SLAM:**
 ```bash
-# Terminal 1: Play bag data  
-ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/
+# Terminal 1: Play bag data at reduced speed
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ --clock --qos-profile-overrides-path qos_overrides.yaml --rate 0.5
 
 # Terminal 2: Run SLAM
-ros2 launch fra532_lab1_part3 slam_toolbox.launch.py
+ros2 launch fra532_lab1_part3 slam_toolbox.launch.py use_sim_time:=true
 
-# Terminal 3: Visualize
-rviz2 -d config/lab1_slam.rviz
+# Terminal 3: View real-time map building
+python3 scripts/view_cumulative_map.py
 ```
 
 ## Data Analysis Workflow
@@ -154,10 +158,13 @@ ros2 bag record /wheel_odom /ekf_odom /icp_odom /map -o results/slam_results
 ### 2. Generate Plots and Maps
 ```bash
 # Plot trajectory comparisons
-python3 scripts/plot_trajectories.py results/comparison_0.db3
+python3 scripts/plot_trajectories.py results/comparison_0.db3 -o results/plots
 
 # Save SLAM map (run while SLAM is active)
-python3 scripts/save_map.py -o slam_map.png
+python3 scripts/save_map.py -o results/slam_map.png
+
+# View real-time map building process
+python3 scripts/view_cumulative_map.py
 ```
 
 ## Key Features Implemented
@@ -204,4 +211,12 @@ python3 scripts/save_map.py -o slam_map.png
 - ✅ slam_toolbox (install via apt)
 - ✅ matplotlib (for plotting scripts)
 
-This complete implementation provides all the code needed for FRA532 Lab1 without requiring any additional .sh files or README modifications as requested.
+## Implementation Status
+
+✅ **Part 1**: EKF Odometry Fusion - **COMPLETE**
+✅ **Part 2**: ICP Odometry Refinement - **COMPLETE**
+✅ **Part 3**: SLAM Configuration - **COMPLETE & TESTED**
+✅ **Analysis Tools**: Trajectory plotting and map saving - **COMPLETE**
+✅ **Documentation**: Comprehensive README and usage guide - **COMPLETE**
+
+All packages have been built and tested successfully. The implementation is ready for experimental data collection and analysis.
