@@ -1,0 +1,35 @@
+/scan:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 5
+
+/imu:  
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 10
+
+/joint_states:
+  reliability: reliable
+  durability: volatile  
+  history: keep_last
+  depth: 10
+
+/tf:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 100
+
+/tf_static:
+  reliability: reliable
+  durability: transient_local
+  history: keep_last  
+  depth: 100
+
+/clock:
+  reliability: best_effort
+  durability: volatile
+  history: keep_last
+  depth: 1
