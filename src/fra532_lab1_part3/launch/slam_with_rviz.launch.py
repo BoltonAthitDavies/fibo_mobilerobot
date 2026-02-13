@@ -20,9 +20,17 @@ def generate_launch_description():
         slam_params_file_default = os.path.join(current_dir, 'src', 'fra532_lab1_part3', 'config', 'slam_params.yaml')
         package_dir = os.path.join(current_dir, 'src', 'fra532_lab1_part3')
     
-    # RViz config file
-    current_dir = os.getcwd()  
+    # RViz config file - more robust path resolution
+    current_dir = os.getcwd()
     rviz_config_file = os.path.join(current_dir, 'config', 'lab1_slam.rviz')
+    
+    # Fallback if not found in workspace root
+    if not os.path.exists(rviz_config_file):
+        try:
+            package_dir = get_package_share_directory('fra532_lab1_part3')
+            rviz_config_file = os.path.join(package_dir, '..', '..', '..', 'config', 'lab1_slam.rviz')
+        except:
+            rviz_config_file = '/tmp/default_slam.rviz'  # Fallback
     
     # Declare launch arguments
     use_sim_time_arg = DeclareLaunchArgument(
@@ -62,11 +70,11 @@ def generate_launch_description():
         output='screen'
     )
 
-    # Wheel Odometry Node  
+    # Wheel Odometry Node for SLAM
     wheel_odometry_node = Node(
         package='fra532_lab1_part3',
         executable='wheel_odometry',
-        name='wheel_odometry',
+        name='wheel_odometry_slam_node', 
         parameters=[{'use_sim_time': use_sim_time}],
         output='screen'
     )
@@ -75,7 +83,7 @@ def generate_launch_description():
     base_to_laser_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='base_to_laser_tf',
+        name='base_to_laser_tf_slam',
         arguments=['0.032', '0', '0.172', '0', '0', '0', 'base_link', 'base_scan']
     )
 
@@ -87,12 +95,12 @@ def generate_launch_description():
         arguments=['0', '0', '0.010', '0', '0', '0', 'base_footprint', 'base_link']
     )
     
-    # RViz Node
+    # RViz Node with safer config handling
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
-        name='rviz2',
-        arguments=['-d', rviz_config],
+        name='rviz2_slam',
+        arguments=['-d', rviz_config] if os.path.exists(rviz_config_file) else [],
         parameters=[{'use_sim_time': use_sim_time}],
         output='screen'
     )

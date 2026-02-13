@@ -4,8 +4,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Pose, Twist, TransformStamped
-from tf2_ros import TransformBroadcaster
+from geometry_msgs.msg import Pose, Twist
 import math
 import numpy as np
 from rclpy.time import Time
@@ -36,10 +35,9 @@ class WheelOdometryNode(Node):
             10
         )
         
-        self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
-        self.tf_broadcaster = TransformBroadcaster(self)
+        self.odom_pub = self.create_publisher(Odometry, '/wheel_odom_slam', 10)
         
-        self.get_logger().info('Wheel Odometry Node started')
+        self.get_logger().info('Wheel Odometry Node (SLAM) started')
         
     def joint_states_callback(self, msg):
         """Process joint states to compute wheel odometry."""
@@ -164,24 +162,8 @@ class WheelOdometryNode(Node):
         odom_msg.twist.covariance[0] = 0.1   # vx
         odom_msg.twist.covariance[35] = 0.2  # vtheta
         
+        # Publish wheel odometry message (SLAM version)
         self.odom_pub.publish(odom_msg)
-        
-        # Publish transform
-        tf_msg = TransformStamped()
-        tf_msg.header.stamp = timestamp
-        tf_msg.header.frame_id = 'odom'
-        tf_msg.child_frame_id = 'base_footprint'
-        
-        tf_msg.transform.translation.x = self.x
-        tf_msg.transform.translation.y = self.y
-        tf_msg.transform.translation.z = 0.0
-        
-        tf_msg.transform.rotation.x = 0.0
-        tf_msg.transform.rotation.y = 0.0
-        tf_msg.transform.rotation.z = math.sin(self.theta / 2.0)
-        tf_msg.transform.rotation.w = math.cos(self.theta / 2.0)
-        
-        self.tf_broadcaster.sendTransform(tf_msg)
 
 
 def main(args=None):

@@ -42,7 +42,6 @@ class SimpleWheelOdometryNode(Node):
         )
         
         self.odom_pub = self.create_publisher(Odometry, '/wheel_odom', 10)
-        self.tf_broadcaster = TransformBroadcaster(self)
         
         self.get_logger().info('Simple Wheel Odometry Node started')
         
@@ -158,24 +157,8 @@ class SimpleWheelOdometryNode(Node):
         odom_msg.pose.covariance[7] = 0.1   # y
         odom_msg.pose.covariance[35] = 0.2  # theta
         
+        # Publish wheel odometry message
         self.odom_pub.publish(odom_msg)
-        
-        # Publish transform  
-        tf_msg = TransformStamped()
-        tf_msg.header.stamp = timestamp
-        tf_msg.header.frame_id = 'odom'
-        tf_msg.child_frame_id = 'base_footprint'
-        
-        tf_msg.transform.translation.x = self.x
-        tf_msg.transform.translation.y = self.y
-        tf_msg.transform.translation.z = 0.0
-        
-        tf_msg.transform.rotation.x = 0.0
-        tf_msg.transform.rotation.y = 0.0
-        tf_msg.transform.rotation.z = math.sin(self.theta / 2.0)
-        tf_msg.transform.rotation.w = math.cos(self.theta / 2.0)
-        
-        self.tf_broadcaster.sendTransform(tf_msg)
 
 
 def main(args=None):

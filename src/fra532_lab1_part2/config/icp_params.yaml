@@ -1,0 +1,39 @@
+# ICP Odometry Refinement Parameters
+
+icp_localization_node:
+  ros__parameters:
+    # ICP Algorithm Parameters
+    max_iterations: 50
+    convergence_threshold: 0.001
+    max_correspondence_distance: 1.0
+    
+    # Odometry Refinement Parameters
+    use_ekf_initial_guess: true
+    initial_guess_weight: 0.5
+    
+    # Covariance Parameters (refined estimates)
+    refined_position_variance: 0.01
+    refined_orientation_variance: 0.05
+    
+    # Scan Processing
+    min_scan_range: 0.1
+    max_scan_range: 10.0
+    scan_downsample_factor: 1
+    
+    # Consecutive Scan Matching
+    max_scan_age: 1.0          # seconds
+    min_correspondences: 10     # minimum correspondences for valid ICP
+    
+    # Publishing
+    publish_frequency: 10.0  # Hz
+    publish_tf: true
+    
+scan_matcher_node:
+  ros__parameters:
+    # Scan Matching Parameters
+    max_linear_correction: 0.1
+    max_angular_correction: 0.2
+    
+    # Processing
+    enable_scan_matching: true
+    scan_buffer_size: 10
