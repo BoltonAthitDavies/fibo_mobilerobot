@@ -4,11 +4,11 @@ icp_odometry_node:
     # ICP Algorithm Parameters
     max_iterations: 100
     convergence_threshold: 0.001
-    max_correspondence_distance: 0.2
+    max_correspondence_distance: 0.005
     
     # Laser Scan Parameters  
     max_range: 3.5
-    min_range: 0.12
+    min_range: 0.119
     angle_increment: 0.017453293  # ~1 degree in radians
     
     # Odometry Parameters

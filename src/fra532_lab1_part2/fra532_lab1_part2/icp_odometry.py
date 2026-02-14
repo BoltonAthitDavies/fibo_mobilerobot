@@ -3,7 +3,7 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, OccupancyGrid
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
 import numpy as np
@@ -20,7 +20,7 @@ class ICPOdometryNode(Node):
         # ICP parameters
         self.max_iterations = 100
         self.convergence_threshold = 0.001
-        self.max_correspondence_distance = 0.2  # 50cm max match distance
+        self.max_correspondence_distance = 0.005  # meters, map resolution-aware matching
         # self.downsample_factor = 2  # Use every 2nd point
         self.downsample_factor = 1  # Use every 2nd point
         
@@ -38,10 +38,25 @@ class ICPOdometryNode(Node):
         self.first_scan = True
         self.last_keyframe_pose = None
         
-        # EKF odometry (our initial guess)
+        # EKF odometry (our initial guess) - buffered for 5 Hz consumption
         self.ekf_pose = np.zeros(3)  # [x, y, theta] from EKF
         self.ekf_available = False
+        self.latest_ekf_pose = None  # Latest buffered EKF pose for 5 Hz processing
         
+        # Laser scan buffer - hold latest scan for 5 Hz processing
+        self.latest_laser_scan = None
+        self.latest_laser_points = None
+        self.new_laser_data = False  # Flag to track if fresh data arrived
+        
+        # Map data (point-to-map target)
+        self.map_available = False
+        self.map_resolution = None
+        self.map_origin_x = None
+        self.map_origin_y = None
+        self.map_width = None
+        self.map_height = None
+        self.map_data = None  # 2D numpy array
+
         # Subscribers with QoS compatibility
         from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
         
@@ -50,75 +65,111 @@ class ICPOdometryNode(Node):
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=10
         )
+
+        map_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1
+        )
         
         self.laser_sub = self.create_subscription(LaserScan, '/scan', self.laser_callback, laser_qos)
         self.ekf_sub = self.create_subscription(Odometry, '/ekf_odom', self.ekf_callback, 10)
+        self.map_sub = self.create_subscription(OccupancyGrid, '/icp_map', self.map_callback, map_qos)
+        
+        # Create 5 Hz timer for synchronized ICP processing
+        self.icp_timer = self.create_timer(0.2, self.icp_process_step)  # 5 Hz = 1/0.2s
         
         # Publishers
         self.odom_pub = self.create_publisher(Odometry, '/icp_odom', 10)
         self.tf_broadcaster = TransformBroadcaster(self)
         
-        self.get_logger().info('ICP Odometry Node started (EKF-based)')
+        self.get_logger().info('ICP Odometry Node started (5 Hz synchronized, EKF-based)')
+
         
     def laser_callback(self, msg):
-        """Process laser scans for ICP odometry refinement using EKF state."""
+        """Buffer latest laser scan for 5 Hz synchronized processing."""
         try:
             # Convert and downsample laser scan
             current_points = self.laser_scan_to_points(msg)
             current_points = self.downsample_points(current_points)
             
             if len(current_points) < 10:
-                self.get_logger().warn('Too few valid scan points')
+                self.get_logger().debug('Too few valid scan points, skipping')
                 return
             
+            # Store latest scan and mark as new data
+            self.latest_laser_scan = msg
+            self.latest_laser_points = current_points
+            self.new_laser_data = True
+            
+        except Exception as e:
+            self.get_logger().error(f'Error in laser callback: {str(e)}')
+    
+    def icp_process_step(self):
+        """5 Hz timer callback for synchronized ICP processing."""
+        try:
+            # Check prerequisites
+            if not self.ekf_available:
+                self.get_logger().warn('EKF not yet available')
+                return
+            
+            if self.latest_laser_points is None or len(self.latest_laser_points) < 10:
+                self.get_logger().debug('No valid laser data buffered')
+                return
+            
+            # Update buffer with latest EKF
+            self.latest_ekf_pose = self.ekf_pose.copy()
+            
+            # Initialize on first laser scan
             if self.first_scan:
-                # Initialize with EKF pose if available
-                if self.ekf_available:
-                    self.state = self.ekf_pose.copy()
-                    self.get_logger().info(f'Initialized ICP state from EKF: {self.state}')
+                self.state = self.latest_ekf_pose.copy()
+                self.get_logger().info(f'Initialized ICP state from EKF: {self.state}')
                 
                 # Add first keyframe
-                self.add_keyframe(self.state, current_points, msg.header.stamp)
+                self.add_keyframe(self.state, self.latest_laser_points, self.latest_laser_scan.header.stamp)
                 
-                self.previous_scan = msg
-                self.previous_points = current_points
+                self.previous_points = self.latest_laser_points.copy()
                 self.first_scan = False
-                self.get_logger().info(f'First scan stored as keyframe: {len(current_points)} points')
+                self.new_laser_data = False
+                return
+            
+            # Process ICP only if fresh laser data
+            if not self.new_laser_data:
+                self.get_logger().debug('Laser data already processed, skipping this cycle')
                 return
             
             if self.previous_points is None or len(self.previous_points) < 10:
                 self.get_logger().warn('No valid previous scan')
                 return
             
-            # Use EKF pose as initial guess for ICP
-            if self.ekf_available:
-                initial_pose = self.ekf_pose.copy()
-            else:
-                # Fallback to previous ICP pose
-                initial_pose = self.state.copy()
-                self.get_logger().warn('EKF not available, using previous ICP pose')
+            # Use buffered EKF pose as initial guess
+            initial_pose = self.latest_ekf_pose.copy()
             
-            # Run ICP: match current scan to keyframes using EKF pose as starting point
-            refined_pose = self.run_icp_with_keyframes(current_points, initial_pose)
+            # Run ICP: match current scan to map if available, else fallback to keyframes
+            if self.map_available:
+                refined_pose = self.run_icp_point_to_map(self.latest_laser_points, initial_pose)
+            else:
+                refined_pose = self.run_icp_with_keyframes(self.latest_laser_points, initial_pose)
             
             # Update state with refined pose
             self.state = refined_pose
             
             # Add new keyframe if significant movement
             if self.should_add_keyframe(refined_pose):
-                self.add_keyframe(refined_pose, current_points, msg.header.stamp)
+                self.add_keyframe(refined_pose, self.latest_laser_points, self.latest_laser_scan.header.stamp)
             
-            # Publish refined odometry
-            self.publish_odometry(msg.header.stamp)
+            # Publish refined odometry at 5 Hz
+            self.publish_odometry(self.latest_laser_scan.header.stamp)
             
             # Update for next iteration
-            self.previous_scan = msg
-            self.previous_points = current_points
+            self.previous_points = self.latest_laser_points.copy()
+            self.new_laser_data = False
             
         except Exception as e:
-            self.get_logger().error(f'Error in laser callback: {str(e)}')
+            self.get_logger().error(f'Error in ICP process step: {str(e)}')
             import traceback
             self.get_logger().error(traceback.format_exc())
+
     
     def run_icp_with_keyframes(self, curr_points, initial_pose):
         """
@@ -179,6 +230,45 @@ class ICPOdometryNode(Node):
         correction_magnitude = np.linalg.norm(current_pose - initial_pose)
         self.get_logger().info(f'ICP correction: {correction_magnitude:.4f}m, Final pose: [{current_pose[0]:.3f}, {current_pose[1]:.3f}, {current_pose[2]:.3f}]')
         
+        return current_pose
+
+    def run_icp_point_to_map(self, curr_points, initial_pose):
+        """
+        ICP algorithm using occupancy grid map as target (point-to-map).
+        Matches current scan against nearby occupied map cells.
+        """
+        if not self.map_available:
+            self.get_logger().warn('No map available for point-to-map ICP')
+            return initial_pose
+
+        current_pose = initial_pose.copy()
+
+        for iteration in range(self.max_iterations):
+            curr_points_global = self.transform_points_to_global(curr_points, current_pose)
+
+            curr_matched, map_matched = self.find_map_correspondences(curr_points_global)
+
+            if len(curr_matched) < 10:
+                self.get_logger().warn(f'Too few map correspondences: {len(curr_matched)}')
+                break
+
+            pose_correction = self.estimate_pose_correction_from_matches(
+                curr_matched, map_matched, current_pose
+            )
+
+            current_pose += pose_correction
+            current_pose[2] = math.atan2(math.sin(current_pose[2]), math.cos(current_pose[2]))
+
+            if np.linalg.norm(pose_correction) < self.convergence_threshold:
+                self.get_logger().info(f'Point-to-map ICP converged after {iteration + 1} iterations')
+                break
+
+        correction_magnitude = np.linalg.norm(current_pose - initial_pose)
+        self.get_logger().info(
+            f'Point-to-map correction: {correction_magnitude:.4f}m, Final pose: '
+            f'[{current_pose[0]:.3f}, {current_pose[1]:.3f}, {current_pose[2]:.3f}]'
+        )
+
         return current_pose
     
     def transform_points_to_global(self, points, pose):
@@ -258,10 +348,48 @@ class ICPOdometryNode(Node):
             dy = prev_centroid[1] - curr_centroid[1]
             
             # Small correction gains to prevent overshooting
-            correction = np.array([dx * 0.1, dy * 0.1, dtheta * 0.1])
+            correction = np.array([dx * 0.7, dy * 0.7, dtheta * 0.7])
             
             return correction
         
+        except Exception as e:
+            self.get_logger().warn(f'Pose correction estimation failed: {str(e)}')
+            return np.zeros(3)
+
+    def estimate_pose_correction_from_matches(self, curr_matched, map_matched, current_pose):
+        """Estimate pose correction using matched point arrays."""
+        if len(curr_matched) < 3:
+            return np.zeros(3)
+
+        try:
+            curr_matched = np.asarray(curr_matched)
+            map_matched = np.asarray(map_matched)
+
+            curr_centroid = np.mean(curr_matched, axis=0)
+            map_centroid = np.mean(map_matched, axis=0)
+
+            curr_centered = curr_matched - curr_centroid
+            map_centered = map_matched - map_centroid
+
+            H = curr_centered.T @ map_centered
+            U, S, Vt = np.linalg.svd(H)
+            R = Vt.T @ U.T
+
+            if np.linalg.det(R) < 0:
+                Vt[-1, :] *= -1
+                R = Vt.T @ U.T
+
+            current_theta = current_pose[2]
+            target_theta = math.atan2(R[1, 0], R[0, 0])
+            dtheta = target_theta - current_theta
+            dtheta = math.atan2(math.sin(dtheta), math.cos(dtheta))
+
+            dx = map_centroid[0] - curr_centroid[0]
+            dy = map_centroid[1] - curr_centroid[1]
+
+            correction = np.array([dx * 0.7, dy * 0.7, dtheta * 0.7])
+            return correction
+
         except Exception as e:
             self.get_logger().warn(f'Pose correction estimation failed: {str(e)}')
             return np.zeros(3)
@@ -288,7 +416,11 @@ class ICPOdometryNode(Node):
         return np.array(points)
     
     def ekf_callback(self, msg):
-        """Store EKF odometry as initial guess."""
+        """Buffer latest EKF odometry for 5 Hz consumption.
+        
+        Note: EKF publishes at 20 Hz, but we only consume it every 0.2s (5 Hz) 
+        in the icp_process_step() timer. This reduces redundant ICP processing.
+        """
         # Extract pose
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
@@ -301,8 +433,77 @@ class ICPOdometryNode(Node):
         self.ekf_pose = np.array([x, y, theta])
         
         if not self.ekf_available:
-            self.get_logger().info('EKF odometry available')
+            self.get_logger().info(f'EKF odometry available at {x:.3f}, {y:.3f}, {math.degrees(theta):.1f}°')
             self.ekf_available = True
+
+    def map_callback(self, msg):
+        """Store occupancy grid for point-to-map ICP."""
+        if msg.info.width == 0 or msg.info.height == 0:
+            return
+
+        self.map_resolution = msg.info.resolution
+        self.map_origin_x = msg.info.origin.position.x
+        self.map_origin_y = msg.info.origin.position.y
+        self.map_width = msg.info.width
+        self.map_height = msg.info.height
+
+        data = np.array(msg.data, dtype=np.int8).reshape((self.map_height, self.map_width))
+        self.map_data = data
+        self.map_available = True
+
+    def world_to_map(self, x, y):
+        """Convert world coordinates to map grid indices."""
+        col = int((x - self.map_origin_x) / self.map_resolution)
+        row = int((y - self.map_origin_y) / self.map_resolution)
+        return row, col
+
+    def map_to_world(self, row, col):
+        """Convert map grid indices to world coordinates (cell center)."""
+        x = self.map_origin_x + (col + 0.5) * self.map_resolution
+        y = self.map_origin_y + (row + 0.5) * self.map_resolution
+        return x, y
+
+    def is_valid_map_cell(self, row, col):
+        return 0 <= row < self.map_height and 0 <= col < self.map_width
+
+    def find_map_correspondences(self, curr_points_global):
+        """Find correspondences between current points and occupied map cells."""
+        if self.map_data is None or self.map_resolution is None:
+            return [], []
+
+        curr_matched = []
+        map_matched = []
+
+        search_radius_cells = max(1, int(math.ceil(self.max_correspondence_distance / self.map_resolution)))
+
+        for curr_pt in curr_points_global:
+            row, col = self.world_to_map(curr_pt[0], curr_pt[1])
+
+            best_dist = None
+            best_point = None
+
+            for dr in range(-search_radius_cells, search_radius_cells + 1):
+                for dc in range(-search_radius_cells, search_radius_cells + 1):
+                    r = row + dr
+                    c = col + dc
+                    if not self.is_valid_map_cell(r, c):
+                        continue
+
+                    if self.map_data[r, c] < 50:
+                        continue
+
+                    mx, my = self.map_to_world(r, c)
+                    dist = math.hypot(curr_pt[0] - mx, curr_pt[1] - my)
+
+                    if dist <= self.max_correspondence_distance and (best_dist is None or dist < best_dist):
+                        best_dist = dist
+                        best_point = (mx, my)
+
+            if best_point is not None:
+                curr_matched.append(curr_pt)
+                map_matched.append(best_point)
+
+        return curr_matched, map_matched
     
     def publish_odometry(self, timestamp):
         """Publish ICP-refined odometry."""

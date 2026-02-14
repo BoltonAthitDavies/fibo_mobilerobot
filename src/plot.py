@@ -28,7 +28,7 @@ class OdomEvaluator(Node):
         self.writers = {}
         
         for topic, config in self.topics.items():
-            filename = f"odom_{config['label'].lower().replace(' ', '_')}_data_seq2.csv"
+            filename = f"odom_{config['label'].lower().replace(' ', '_')}_data_seq1.csv"
             self.csv_files[topic] = open(filename, 'w', newline='')
             self.writers[topic] = csv.writer(self.csv_files[topic])
             self.writers[topic].writerow(['timestamp', 'x', 'y', 'yaw'])
@@ -140,7 +140,7 @@ class OdomEvaluator(Node):
             print(f"  Yaw range: {df['Yaw (deg)'].min():.1f} to {df['Yaw (deg)'].max():.1f} deg")
             
             # Save full table to CSV
-            filename = f"table_{config['label'].lower().replace(' ', '_')}_full_seq2.csv"
+            filename = f"table_{config['label'].lower().replace(' ', '_')}_full_seq1.csv"
             df.to_csv(filename, index=False)
             print(f"  Full table saved to: {filename}")
         
