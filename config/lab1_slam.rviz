@@ -170,7 +170,7 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
-        base_footprint:
+        slam_odom:
           Value: true
         base_link:
           Value: true
@@ -188,7 +188,7 @@ Visualization Manager:
       Tree:
         map:
           odom:
-            base_footprint:
+            slam_odom:
               base_link:
                 base_scan:
                   {}

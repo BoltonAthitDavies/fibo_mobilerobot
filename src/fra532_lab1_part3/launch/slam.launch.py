@@ -62,6 +62,14 @@ def generate_launch_description():
         output='screen'
     )
 
+    # Static transform from map to odom (for global reference)
+    map_to_odom_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher', 
+        name='map_to_odom_tf',
+        arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom']
+    )
+
     # Static transform from base_link to base_scan (laser)
     base_to_laser_tf = Node(
         package='tf2_ros',
@@ -70,12 +78,12 @@ def generate_launch_description():
         arguments=['0.032', '0', '0.172', '0', '0', '0', 'base_link', 'base_scan']
     )
 
-    # Static transform from base_footprint to base_link  
-    base_footprint_to_base_link_tf = Node(
+    # Static transform from slam_odom to base_link  
+    slam_odom_to_base_link_tf = Node(
         package='tf2_ros', 
         executable='static_transform_publisher',
-        name='base_footprint_to_base_link_tf',
-        arguments=['0', '0', '0.010', '0', '0', '0', 'base_footprint', 'base_link']
+        name='slam_odom_to_base_link_tf',
+        arguments=['0', '0', '0.010', '0', '0', '0', 'slam_odom', 'base_link']
     )
 
     # Robot State Publisher (if URDF is needed)
@@ -96,9 +104,10 @@ def generate_launch_description():
     ld.add_action(slam_params_file_arg)
     
     # Add nodes
+    ld.add_action(map_to_odom_tf)
     ld.add_action(wheel_odometry_node)
     ld.add_action(start_async_slam_toolbox_node)
     ld.add_action(base_to_laser_tf)
-    ld.add_action(base_footprint_to_base_link_tf)
+    ld.add_action(slam_odom_to_base_link_tf)
     
     return ld

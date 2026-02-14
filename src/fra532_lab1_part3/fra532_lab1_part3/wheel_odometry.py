@@ -138,7 +138,7 @@ class WheelOdometryNode(Node):
         odom_msg = Odometry()
         odom_msg.header.stamp = timestamp
         odom_msg.header.frame_id = 'odom'
-        odom_msg.child_frame_id = 'base_footprint'
+        odom_msg.child_frame_id = 'slam_odom'
         
         # Position
         odom_msg.pose.pose.position.x = self.x
@@ -170,7 +170,7 @@ class WheelOdometryNode(Node):
         tf_msg = TransformStamped()
         tf_msg.header.stamp = timestamp
         tf_msg.header.frame_id = 'odom'
-        tf_msg.child_frame_id = 'base_footprint'
+        tf_msg.child_frame_id = 'slam_odom'
         
         tf_msg.transform.translation.x = self.x
         tf_msg.transform.translation.y = self.y

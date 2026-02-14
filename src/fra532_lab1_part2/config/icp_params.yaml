@@ -1,0 +1,21 @@
+# ICP Odometry Parameters
+icp_odometry_node:
+  ros__parameters:
+    # ICP Algorithm Parameters
+    max_iterations: 100
+    convergence_threshold: 0.001
+    max_correspondence_distance: 0.2
+    
+    # Laser Scan Parameters  
+    max_range: 3.5
+    min_range: 0.12
+    angle_increment: 0.017453293  # ~1 degree in radians
+    
+    # Odometry Parameters
+    publish_tf: true
+    base_frame: "base_link"
+    odom_frame: "odom"
+    
+    # Trajectory Logging
+    trajectory_topic: "/icp_trajectory"
+    log_frequency: 10.0  # Hz
