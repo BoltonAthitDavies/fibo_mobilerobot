@@ -62,18 +62,21 @@ timestamp, x, y, theta (radians), vx, vy, angular_velocity
 
 ### How to Run
 ```bash
-# Build Part 1
-colcon build --packages-select fra532_lab1_part1
+# Terminal 1: Start wheel odometry and EKF
+ros2 launch fra532_lab1_part1 wheel_odom_with_rviz.launch.py use_sim_time:=true
+ros2 launch fra532_lab1_part1 ekf_odometry.launch.py use_sim_time:=true
 
-# Source install
-source install/setup.bash
-
-# Run EKF odometry node
-ros2 run fra532_lab1_part1 ekf_odometry_node
-
-# In another terminal, play bag file
-ros2 bag play rosbag_seq0/
+# Terminal 2: Play bag file with clock and QoS overrides
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
 ```
+
+**Available Dataset Sequences:**
+- `fibo_floor3_seq00` - Empty hallway
+- `fibo_floor3_seq01` - Hallway with obstacles & sharp turns
+- `fibo_floor3_seq02` - Hallway with obstacles & smooth motion
 
 ---
 
@@ -127,18 +130,21 @@ EKF updates (20 Hz)─┐                        └─→ ICP Process Step
 
 ### How to Run
 ```bash
-# Build Part 2
-colcon build --packages-select fra532_lab1_part2
+# Terminal 1: Start ICP with mapping and visualization
+ros2 launch fra532_lab1_part2 icp_with_rviz.launch.py use_sim_time:=true
+ros2 launch fra532_lab1_part2 icp_with_mapping.launch.py use_sim_time:=true
 
-# Run ICP with mapper (recommended)
-ros2 launch fra532_lab1_part2 icp_odometry.launch.py
-
-# In another terminal, play bag
-ros2 bag play rosbag_seq2/
-
-# Visualize in RViz with config/icp_odom_viz.rviz
-rviz2 -d config/icp_odom_viz.rviz
+# Terminal 2: Play bag file with clock and QoS overrides
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
 ```
+
+**Available Dataset Sequences:**
+- `fibo_floor3_seq00` - Empty hallway
+- `fibo_floor3_seq01` - Hallway with obstacles & sharp turns
+- `fibo_floor3_seq02` - Hallway with obstacles & smooth motion
 
 ### Map Visualization
 - **Topic:** `/icp_map` (OccupancyGrid)
@@ -173,18 +179,24 @@ rviz2 -d config/icp_odom_viz.rviz
 
 ### How to Run
 ```bash
-# Build Part 3
-colcon build --packages-select fra532_lab1_part3
+# Terminal 1: Start SLAM with visualization
+ros2 launch fra532_lab1_part3 slam_with_rviz.launch.py use_sim_time:=true
+ros2 launch fra532_lab1_part3 slam.launch.py use_sim_time:=true
 
-# Run SLAM
-ros2 launch fra532_lab1_part3 slam.launch.py
+# Terminal 2 (optional): Start SLAM evaluator
+ros2 run fra532_lab1_part3 slam_evaluator
 
-# Play bag file
-ros2 bag play rosbag_seq2/
-
-# View map and trajectory
-rviz2 -d config/slam_viz.rviz
+# Terminal 3: Play bag file with clock and QoS overrides
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
 ```
+
+**Available Dataset Sequences:**
+- `fibo_floor3_seq00` - Empty hallway
+- `fibo_floor3_seq01` - Hallway with obstacles & sharp turns
+- `fibo_floor3_seq02` - Hallway with obstacles & smooth motion
 
 ---
 
@@ -220,13 +232,10 @@ python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq00 rosbag_seq0
 
 ### Trajectory Plotting
 ```bash
-# Method 1: Run Jupyter notebook
-jupyter notebook plot.ipynb
+# Generate trajectory comparison plots
+python3 ./src/plot.py
 
-# Method 2: Use analysis script
-python3 analyze_trajectories.py
-
-# Output: trajectory_comparison/ directory with PNG plots
+# Output: PNG plots saved to current directory
 ```
 
 ### Jupyter Notebook: plot.ipynb
@@ -300,36 +309,73 @@ Each method should be evaluated on:
 
 ## How to Generate Complete Deliverables
 
-### Step 1: Extract Data from Bags
+### Step 1: Build All Packages
+```bash
+colcon build
+source install/setup.bash
+```
+
+All three packages (Part 1, 2, 3) will be built with a single command.
+
+### Step 2: Extract Data from Bags (Optional)
 ```bash
 python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq00 rosbag_seq0
 python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq01 rosbag_seq1
 python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq02 rosbag_seq2
 ```
 
-### Step 2: Build All Packages
-```bash
-colcon build
-source install/setup.bash
-```
+This pre-extracts CSV data for analysis (optional; data can also be logged during runtime)
 
 ### Step 3: Run Parts to Generate Odometry
+
+**For Part 1 (EKF):**
 ```bash
-# Terminal 1: Launch Part 1 (EKF)
-ros2 launch fra532_lab1_part1 ekf_odometry.launch.py
+# Terminal 1: Start EKF
+ros2 launch fra532_lab1_part1 wheel_odom_with_rviz.launch.py use_sim_time:=true
+ros2 launch fra532_lab1_part1 ekf_odometry.launch.py use_sim_time:=true
 
-# Terminal 2: Play bag
-ros2 bag play rosbag_seq0/
+# Terminal 2: Play bag file
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
+```
 
-# Terminal 3: Once done, kill Part 1 and launch Part 2
-ros2 launch fra532_lab1_part2 icp_odometry.launch.py
+**For Part 2 (ICP):**
+```bash
+# Terminal 1: Start ICP with mapping
+ros2 launch fra532_lab1_part2 icp_with_rviz.launch.py use_sim_time:=true
+ros2 launch fra532_lab1_part2 icp_with_mapping.launch.py use_sim_time:=true
+
+# Terminal 2: Play bag file
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
+```
+
+**For Part 3 (SLAM):**
+```bash
+# Terminal 1: Start SLAM
+ros2 launch fra532_lab1_part3 slam_with_rviz.launch.py use_sim_time:=true
+ros2 launch fra532_lab1_part3 slam.launch.py use_sim_time:=true
+
+# Terminal 2 (optional): Start evaluator
+ros2 run fra532_lab1_part3 slam_evaluator
+
+# Terminal 3: Play bag file
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
 ```
 
 ### Step 4: Generate Plots
 ```bash
-jupyter notebook plot.ipynb
-# Generate trajectory comparison plots
+python3 ./src/plot.py
 ```
+
+This generates trajectory comparison plots showing all odometry methods overlaid.
 
 ### Step 5: Analyze Results
 - Compare drift across methods
