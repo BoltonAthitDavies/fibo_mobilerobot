@@ -293,32 +293,6 @@ The notebook provides comprehensive trajectory visualization and analysis:
 - Drift rate (error/distance)
 - Heading consistency
 
----
-
-## File Summary
-
-### Configuration Files (Tunable Parameters)
-| Path | Purpose |
-|------|---------|
-| `src/fra532_lab1_part1/config/ekf_params.yaml` | EKF noise covariances (Q, R) |
-| `src/fra532_lab1_part2/config/icp_params.yaml` | ICP iterations, convergence threshold |
-| `qos_overrides.yaml` | ROS2 QoS settings (reliability, history) |
-
----
-
-## Quality Checklist
-
-Before submission, ensure:
-
-- [ ] All three parts build without errors: `colcon build`
-- [ ] Part 1 EKF produces `/ekf_odom` topic at ~20 Hz
-- [ ] Part 2 ICP produces `/icp_odom` at 5 Hz and `/icp_map` at 1 Hz
-- [ ] CSV data generated for all sequences
-- [ ] Trajectory plots generated showing all methods
-- [ ] Analysis includes error metrics and comparisons
-- [ ] README files complete with parameter descriptions
-- [ ] Code follows ROS2 conventions (package.xml, launch files)
-- [ ] Git history shows development progression
 
 ---
 
