@@ -1,113 +1,333 @@
-# LAB1: Kalman Filter / SLAM
+# FRA532 LAB1 - Deliverables Guide
 
-## Learning Outcomes
-By completing this lab, students will be able to:
+## Overview
+This document describes all deliverables for the FRA532 LAB1: Kalman Filter / SLAM project. The lab is divided into three progressive parts, each building upon previous results to evaluate different odometry and SLAM approaches.
 
-- Implement EKF-based sensor fusion for mobile robots
-- Apply ICP for LiDAR-based odometry refinement
-- Understand the role of loop closure in SLAM
-- Critically evaluate different localization and mapping approaches
-
-## Lab Objective
-The objective of this lab is to understand and evaluate a complete 2D mobile robot localization pipeline by progressively integrating sensor fusion, scan matching, and full SLAM. Students will:
-
-- Fuse wheel odometry and IMU measurements using an Extended Kalman Filter (EKF)
-- Refine odometry using LiDAR-based ICP scan matching
-- Perform full SLAM using `slam_toolbox` (Nav2)
-- Quantitatively and qualitatively compare odometry estimation and mapping performance across different methods
-
-Through this lab, students will gain hands-on experience with probabilistic state estimation, scan matching, and graph-based SLAM using real ROS2 data.
+## Deliverables Location
+The following deliverables are compiled in [6629_Discussion.pdf](6629_Discussion.pdf):
+- Plots of trajectories from wheel odometry, EKF odometry, ICP odometry, and SLAM pose output.
+- Generated 2D maps from ICP odometry and slam_toolbox.
+- Discussion comparing accuracy, drift, and robustness of each method.
 
 ---
 
-## Collaboration Policy
-**Individual Work:** Part 1 (EKF Odometry Fusion) and Part 2 (ICP Odometry Refinement) must be completed individually.
+## Project Structure
 
-**Group Work:** Part 3 (Full SLAM with `slam_toolbox`) must be completed ingruops of **up to 3 students**.
-
-Each student is expected to understand and be able to explain all submitted work.
-
----
-
-## Dataset Description
-The dataset is provided as a ROS bag and contains sensor measurements recorded during robot motion.
-
-**Topics included:**
-
-- **`/scan`**: 2D LiDAR laser scans at 5 Hz
-- **`/imu`**: Gyroscope and accelerometer data at 20 Hz
-- **`/joint_states`**: Wheel motor position and velocity at 20 Hz
-
-The dataset is divided into three sequences, each representing a different environmental condition:
-
-1. **Sequence 00 – Empty Hallway:**
-A static indoor hallway environment with minimal obstacles and no dynamic objects. This sequence is intended to evaluate baseline odometry and sensor fusion performance.
-
-2. **Sequence 01 – Non-Empty Hallway with Sharp Turns:**
-An indoor hallway environment containing obstacles and clutter, with sections of sharp turning motion. This sequence is designed to challenge odometry and scan matching performance under rapid heading changes.
-
-3. **Sequence 02 – Non-Empty Hallway with Non-Aggressive Motion:**
-An indoor hallway environment with obstacles, similar to Sequence 2, but recorded with smoother and non-aggressive robot motion. This sequence is intended to evaluate performance under more stable motion conditions.
+```
+fibo_mobilerobot/
+├── src/
+│   ├── fra532_lab1_part1/          # EKF Odometry Fusion
+│   ├── fra532_lab1_part2/          # ICP Odometry Refinement
+│   └── fra532_lab1_part3/          # Full SLAM with slam_toolbox
+├── FRA532_LAB1_DATASET/            # ROS bag files (3 sequences)
+|   ├── fibo_floor3_seq00/                
+|   ├── fibo_floor3_seq01/                
+|   ├── fibo_floor3_seq02/                
+├── data/                           # Lab 1 csv data (3 sequences)
+|   ├── rosbag_seq0/                # Extracted CSV data (Sequence 0)
+|   ├── rosbag_seq1/                # Extracted CSV data (Sequence 1)
+|   ├── rosbag_seq2/                # Extracted CSV data (Sequence 2)
+|   ├── seq0_v3_output/             # Odometry output data (Sequence 0)
+|   ├── seq1_v3_output/             # Odometry output data (Sequence 1)
+|   └── seq2_v3_output/             # Odometry output data (Sequence 2)
+├── config/                         # RViz visualization configs
+├── plot.ipynb                      # Jupyter notebook for trajectory plotting
+└── 6629_README.md                       # Main project README
+```
 
 ---
 
-## Robot Dimension
+## How to Generate Complete Deliverables
 
-The figure below illustrates the robot geometry and key dimensions used throughout this lab. These parameters are required for accurate wheel odometry computation and sensor frame alignment.
+### Step 1: Build All Packages
+```bash
+colcon build
+source install/setup.bash
+```
 
-![Turtlebot3 Burger Dimension](pic/turtlebot3_dimension1.png)
+All three packages (Part 1, 2, 3) will be built with a single command.
+
+### Step 2: Install python packages
+```bash
+python3 -m pip install -r requirement.txt
+```
+
+This pre-extracts CSV data for analysis (optional; data can also be logged during runtime)
+
+### Step 3: Run Parts to Generate Odometry
+
+**For Part 1 (EKF):**
+```bash
+# Terminal 1: Start EKF with rviz
+ros2 launch fra532_lab1_part1 wheel_odom_with_rviz.launch.py use_sim_time:=true
+# or Terminal 1: Start EKF without rviz
+ros2 launch fra532_lab1_part1 ekf_odometry.launch.py use_sim_time:=true
+
+# Terminal 2 Generate Plots
+python3 ./src/plot.py
+
+# Terminal 3: Play bag file
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
+```
+
+**For Part 2 (ICP):**
+```bash
+# Terminal 1: Start EKF without rviz
+ros2 launch fra532_lab1_part1 ekf_odometry.launch.py use_sim_time:=true
+
+# Terminal 2: Start ICP with mapping with rviz
+ros2 launch fra532_lab1_part2 icp_with_mapping.launch.py use_sim_time:=true
+# or Terminal 2: Start ICP with mapping without rviz
+ros2 launch fra532_lab1_part2 icp_with_rviz.launch.py use_sim_time:=true
+
+# Terminal 3 Generate Plots
+python3 ./src/plot.py
+
+# Terminal 4: Play bag file
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
+```
+
+**For Part 3 (SLAM):**
+```bash
+# Terminal 1: Start SLAM with rviz
+ros2 launch fra532_lab1_part3 slam_with_rviz.launch.py use_sim_time:=true
+# or Terminal 1: Start SLAM without rviz
+ros2 launch fra532_lab1_part3 slam.launch.py use_sim_time:=true
+
+# Terminal 2 Generate Plots
+python3 ./src/plot.py
+
+# Terminal 3: Play bag file
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
+```
+
+This generates trajectory comparison plots showing all odometry methods overlaid.
 
 ---
 
 ## Part 1: EKF Odometry Fusion
 
-### Objective
-The objective of this part is to implement an Extended Kalman Filter (EKF) to fuse wheel odometry and IMU measurements in order to obtain a filtered and more reliable odometry estimate compared to raw wheel odometry.
+### Deliverables
+- **Source Code:** `src/fra532_lab1_part1/fra532_lab1_part1/ekf_odometry.py`
+- **Launch File:** `src/fra532_lab1_part1/launch/ekf_odometry.launch.py`
 
-### Description
-In this part, you will compute wheel odometry from `/joint_states` and fuse it with IMU measurements from `/imu` using an EKF. The EKF estimates the robot pose by combining a differential-drive motion model with probabilistic sensor updates.
+### Key Implementation Files
+| File | Purpose |
+|------|---------|
+| `ekf_odometry.py` | Main EKF node fusing wheel + IMU data |
+| `simple_wheel_odometry.py` | Reference wheel-only odometry (baseline) |
+| `trajectory_logger.py` | Data logging utility for analysis |
+| `ekf_params.yaml` | Tunable EKF parameters (Q, R matrices) |
+
+### Output Data
+**ROS Topic:** `/ekf_odom` (nav_msgs/Odometry at ~20 Hz)
+
+**Logged Files (when running with logging):**
+- `odom_ekf_data.csv` - Full EKF trajectory (all sequences)
+- `odom_ekf_data_seq0.csv` - EKF trajectory (Sequence 0)
+- `odom_ekf_data_seq1.csv` - EKF trajectory (Sequence 1)
+- `odom_ekf_data_seq2.csv` - EKF trajectory (Sequence 2)
+
+**CSV Columns:**
+```
+timestamp, x, y, theta (radians)
+```
+
+### Key Features
+- ✅ Wheel odometry computation from joint states (20 Hz)
+- ✅ IMU angular velocity corrections (asynchronous)
+- ✅ Covariance tracking for uncertainty quantification
+- ✅ TF frame broadcasting for visualization
+
+**Available Dataset Sequences:**
+- `fibo_floor3_seq00` - Empty hallway
+- `fibo_floor3_seq01` - Hallway with obstacles & sharp turns
+- `fibo_floor3_seq02` - Hallway with obstacles & smooth motion
 
 ---
 
 ## Part 2: ICP Odometry Refinement
 
-### Objective
-The objective of this part is to refine the EKF-based odometry using LiDAR scan matching and evaluate the improvement in accuracy and drift.
+### Deliverables
+- **Source Code:** `src/fra532_lab1_part2/fra532_lab1_part2/icp_odometry.py`
+- **Mapper Node:** `src/fra532_lab1_part2/fra532_lab1_part2/icp_mapper.py`
+- **Launch File:** `src/fra532_lab1_part2/launch/icp_odometry.launch.py`
+- **README:** `src/fra532_lab1_part2/README.md`
 
-### Description
-In this part, you will use the EKF odometry from Part 1 as the initial guess for ICP scan matching on consecutive `/scan` messages. The estimated relative pose from ICP is integrated to produce a LiDAR-based odometry estimate.
+### Key Implementation Files
+| File | Purpose |
+|------|---------|
+| `icp_odometry.py` | Main ICP scan matching node (5 Hz synchronized) |
+| `icp_mapper.py` | Occupancy grid mapping from ICP odometry |
+| `icp_params.yaml` | ICP tunable parameters (max iterations, convergence) |
+
+### Output Data
+**ROS Topics:**
+- `/icp_odom` (nav_msgs/Odometry at 5 Hz)
+- `/icp_map` (nav_msgs/OccupancyGrid at 1 Hz)
+
+**Logged Files:**
+- `odom_icp_data.csv` - Full ICP trajectory
+- `odom_icp_data_seq0.csv` - ICP trajectory (Sequence 0)
+- `odom_icp_data_seq1.csv` - ICP trajectory (Sequence 1)
+- `odom_icp_data_seq2.csv` - ICP trajectory (Sequence 2)
+
+**CSV Columns:**
+```
+timestamp, x, y, theta (radians), correction_magnitude
+```
+
+### Key Features
+- ✅ Point-to-point ICP with keyframe buffer (fallback)
+- ✅ Point-to-map ICP using occupancy grids (primary)
+- ✅ **5 Hz synchronized processing** (rate-limited for determinism)
+- ✅ Occupancy grid mapping from LiDAR + odometry
+- ✅ RViz visualization of 2D map
+
+### Architecture: 5 Hz Rate Limiting
+```
+Laser scans (5 Hz)  ─┐
+                      ├─→ [Buffer latest] ─→ [5 Hz Timer (0.2s)]
+EKF updates (20 Hz)─┐                        └─→ ICP Process Step
+                                                  ├─ Run ICP matching
+                                                  ├─ Update pose
+                                                  └─ Publish /icp_odom
+```
+
+**Available Dataset Sequences:**
+- `fibo_floor3_seq00` - Empty hallway
+- `fibo_floor3_seq01` - Hallway with obstacles & sharp turns
+- `fibo_floor3_seq02` - Hallway with obstacles & smooth motion
+
+### Map Visualization
+- **Topic:** `/icp_map` (OccupancyGrid)
+- **Resolution:** 0.05 m/cell
+- **Occupancy Values:** 0 = free, 50+ = occupied, -1 = unknown
+- **RViz Layer:** "Map" with turbo colormap
 
 ---
 
-## Part 3: Full SLAM with `slam_toolbox`
+## Part 3: Full SLAM with slam_toolbox
 
-### Objective
-The objective of this part is to perform full SLAM using `slam_toolbox` and compare its pose estimation and mapping performance with the ICP-based odometry from Part 2.
+### Deliverables
+- **Launch File:** `src/fra532_lab1_part3/launch/slam.launch.py`
+- **Configuration:** ROS2 SLAM Toolbox parameters
+- **README:** `src/fra532_lab1_part3/README.md`
 
-### Description
-In this part, you will run `slam_toolbox` using LiDAR data and an odometry source to perform full SLAM with loop closure. The resulting trajectory and map are compared with the ICP-based odometry from Part 2.
+### Output Data
+**ROS Topics:**
+- `/map` (nav_msgs/OccupancyGrid)
+- `/slam_toolbox/graph_nodes` (visualization_msgs/MarkerArray)
+- `/tf` (pose estimates)
+
+**Logged Files:**
+- `odom_slam_(truth)_data_seq*.csv` - SLAM pose trajectory
+- SLAM serialized maps (graph files)
+
+### Key Features
+- ✅ Loop closure detection
+- ✅ Graph optimization (Ceres solver)
+- ✅ Dynamic vs static SLAM modes
+- ✅ Pose graph visualization
+
+**Available Dataset Sequences:**
+- `fibo_floor3_seq00` - Empty hallway
+- `fibo_floor3_seq01` - Hallway with obstacles & sharp turns
+- `fibo_floor3_seq02` - Hallway with obstacles & smooth motion
+
+---
+
+## Data Analysis & Visualization
+
+### CSV Data Files
+All odometry data is exported to CSV format for analysis. Files are organized by sequence:
+
+```
+rosbag_seq0/
+├── odom_ekf_data_seq0.csv
+├── odom_icp_data_seq0.csv
+└── odom_slam_(truth)_data_seq0.csv
+
+rosbag_seq1/
+├── odom_ekf_data_seq1.csv
+├── odom_icp_data_seq1.csv
+└── odom_slam_(truth)_data_seq1.csv
+
+rosbag_seq2/
+├── odom_ekf_data_seq2.csv
+├── odom_icp_data_seq2.csv
+└── odom_slam_(truth)_data_seq2.csv
+```
+
+### Data Extraction
+```bash
+# Extract csv from existing rosbag
+python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq00 rosbag_seq0
+
+# This generates CSV files in rosbag_seq0/ directory
+```
+
+### Jupyter Notebook: plot.ipynb
+The notebook provides comprehensive trajectory visualization and analysis:
+- **Plot 1:** XY trajectory comparison (all methods overlaid)
+- **Plot 2:** X position vs time
+- **Plot 3:** Y position vs time
+- **Plot 4:** Heading angle vs time
+- **Plot 5:** Cumulative error / drift analysis
+- **Plot 6:** Method comparison metrics
+
+**Key Metrics Computed:**
+- Trajectory length (total distance traveled)
+- Final position error (if ground truth available)
+- Drift rate (error/distance)
+- Heading consistency
 
 ---
 
-## Deliverables
+## File Summary
 
-Students should submit:
-
-1. Source code
-2. README
-3. Plots of trajectories from:
-   - Wheel odometry
-   - EKF odometry
-   - ICP odometry
-   - SLAM pose output
-4. Generated 2D maps from ICP odometry and `slam_toolbox`
-5. A discussion comparing accuracy, drift, and robustness of each method
+### Configuration Files (Tunable Parameters)
+| Path | Purpose |
+|------|---------|
+| `src/fra532_lab1_part1/config/ekf_params.yaml` | EKF noise covariances (Q, R) |
+| `src/fra532_lab1_part2/config/icp_params.yaml` | ICP iterations, convergence threshold |
+| `qos_overrides.yaml` | ROS2 QoS settings (reliability, history) |
 
 ---
 
-## MATLAB Support
+## Quality Checklist
 
-**Note for MATLAB users:** Students who choose to use MATLAB for this lab can load and process the ROS bag files using MATLAB’s ROS Toolbox. Please refer to the official MathWorks documentation:
-https://www.mathworks.com/help/ros/ug/work-with-rosbag-logfiles.html
+Before submission, ensure:
+
+- [ ] All three parts build without errors: `colcon build`
+- [ ] Part 1 EKF produces `/ekf_odom` topic at ~20 Hz
+- [ ] Part 2 ICP produces `/icp_odom` at 5 Hz and `/icp_map` at 1 Hz
+- [ ] CSV data generated for all sequences
+- [ ] Trajectory plots generated showing all methods
+- [ ] Analysis includes error metrics and comparisons
+- [ ] README files complete with parameter descriptions
+- [ ] Code follows ROS2 conventions (package.xml, launch files)
+- [ ] Git history shows development progression
 
 ---
+
+## References & Resources
+
+- **ROS2 Documentation:** https://docs.ros.org/en-foxy/
+- **slam_toolbox:** https://github.com/StanleyInnovation/slam_toolbox
+- **TurtleBot3 Specs:** https://emanual.robotis.com/docs/en/platform/turtlebot3/overview/
+- **EKF Theory:** Probabilistic Robotics (Thrun, Burgard, Fox)
+- **ICP Algorithm:** "A Method for Registration of 3-D Shapes" (Besl & McKay, 1992)
+
+---
+
+**Last Updated:** February 15, 2026  
