@@ -50,6 +50,8 @@ All three packages (Part 1, 2, 3) will be built with a single command.
 ### Step 2: Install python packages
 ```bash
 python3 -m pip install -r requirement.txt
+chmod +x src/fra532_lab1_part2/fra532_lab1_part2/icp_mapper.py
+sudo apt install ros-humble-geometry-msgs
 ```
 
 This pre-extracts CSV data for analysis (optional; data can also be logged during runtime)
