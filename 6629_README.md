@@ -3,6 +3,12 @@
 ## Overview
 This document describes all deliverables for the FRA532 LAB1: Kalman Filter / SLAM project. The lab is divided into three progressive parts, each building upon previous results to evaluate different odometry and SLAM approaches.
 
+## Deliverables Location
+The following deliverables are compiled in [6629_Discussion.pdf](6629_Discussion.pdf):
+- Plots of trajectories from wheel odometry, EKF odometry, ICP odometry, and SLAM pose output.
+- Generated 2D maps from ICP odometry and slam_toolbox.
+- Discussion comparing accuracy, drift, and robustness of each method.
+
 ---
 
 ## Project Structure
