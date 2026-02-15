@@ -20,14 +20,99 @@ fibo_mobilerobot/
 │   ├── fra532_lab1_part2/          # ICP Odometry Refinement
 │   └── fra532_lab1_part3/          # Full SLAM with slam_toolbox
 ├── FRA532_LAB1_DATASET/            # ROS bag files (3 sequences)
-├── rosbag_seq0/                    # Extracted CSV data (Sequence 0)
-├── rosbag_seq1/                    # Extracted CSV data (Sequence 1)
-├── rosbag_seq2/                    # Extracted CSV data (Sequence 2)
+|   ├── fibo_floor3_seq00/                
+|   ├── fibo_floor3_seq01/                
+|   ├── fibo_floor3_seq02/                
+├── data/                           # Lab 1 csv data (3 sequences)
+|   ├── rosbag_seq0/                # Extracted CSV data (Sequence 0)
+|   ├── rosbag_seq1/                # Extracted CSV data (Sequence 1)
+|   ├── rosbag_seq2/                # Extracted CSV data (Sequence 2)
+|   ├── seq0_v3_output/             # Odometry output data (Sequence 0)
+|   ├── seq1_v3_output/             # Odometry output data (Sequence 1)
+|   └── seq2_v3_output/             # Odometry output data (Sequence 2)
 ├── config/                         # RViz visualization configs
 ├── plot.ipynb                      # Jupyter notebook for trajectory plotting
-├── analyze_trajectories.py         # Analysis and comparison script
-└── README.md                       # Main project README
+└── 6629_README.md                       # Main project README
 ```
+
+---
+
+## How to Generate Complete Deliverables
+
+### Step 1: Build All Packages
+```bash
+colcon build
+source install/setup.bash
+```
+
+All three packages (Part 1, 2, 3) will be built with a single command.
+
+### Step 2: Extract Data from Bags (Optional)
+```bash
+python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq00 rosbag_seq0
+python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq01 rosbag_seq1
+python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq02 rosbag_seq2
+```
+
+This pre-extracts CSV data for analysis (optional; data can also be logged during runtime)
+
+### Step 3: Run Parts to Generate Odometry
+
+**For Part 1 (EKF):**
+```bash
+# Terminal 1: Start EKF with rviz
+ros2 launch fra532_lab1_part1 wheel_odom_with_rviz.launch.py use_sim_time:=true
+# or Terminal 1: Start EKF without rviz
+ros2 launch fra532_lab1_part1 ekf_odometry.launch.py use_sim_time:=true
+
+# Terminal 2 Generate Plots
+python3 ./src/plot.py
+
+# Terminal 3: Play bag file
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
+```
+
+**For Part 2 (ICP):**
+```bash
+# Terminal 1: Start EKF without rviz
+ros2 launch fra532_lab1_part1 ekf_odometry.launch.py use_sim_time:=true
+
+# Terminal 2: Start ICP with mapping with rviz
+ros2 launch fra532_lab1_part2 icp_with_rviz.launch.py use_sim_time:=true
+# or Terminal 2: Start ICP with mapping without rviz
+ros2 launch fra532_lab1_part2 icp_with_mapping.launch.py use_sim_time:=true
+
+# Terminal 3 Generate Plots
+python3 ./src/plot.py
+
+# Terminal 4: Play bag file
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
+```
+
+**For Part 3 (SLAM):**
+```bash
+# Terminal 1: Start SLAM with rviz
+ros2 launch fra532_lab1_part3 slam_with_rviz.launch.py use_sim_time:=true
+# or Terminal 1: Start SLAM without rviz
+ros2 launch fra532_lab1_part3 slam.launch.py use_sim_time:=true
+
+# Terminal 2 Generate Plots
+python3 ./src/plot.py
+
+# Terminal 3: Play bag file
+ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
+    --clock \
+    --qos-profile-overrides-path qos_overrides.yaml \
+    --rate 1.0
+```
+
+This generates trajectory comparison plots showing all odometry methods overlaid.
 
 ---
 
@@ -36,7 +121,6 @@ fibo_mobilerobot/
 ### Deliverables
 - **Source Code:** `src/fra532_lab1_part1/fra532_lab1_part1/ekf_odometry.py`
 - **Launch File:** `src/fra532_lab1_part1/launch/ekf_odometry.launch.py`
-- **README:** `src/fra532_lab1_part1/README.md`
 
 ### Key Implementation Files
 | File | Purpose |
@@ -57,7 +141,7 @@ fibo_mobilerobot/
 
 **CSV Columns:**
 ```
-timestamp, x, y, theta (radians), vx, vy, angular_velocity
+timestamp, x, y, theta (radians)
 ```
 
 ### Key Features
@@ -65,19 +149,6 @@ timestamp, x, y, theta (radians), vx, vy, angular_velocity
 - ✅ IMU angular velocity corrections (asynchronous)
 - ✅ Covariance tracking for uncertainty quantification
 - ✅ TF frame broadcasting for visualization
-
-### How to Run
-```bash
-# Terminal 1: Start wheel odometry and EKF
-ros2 launch fra532_lab1_part1 wheel_odom_with_rviz.launch.py use_sim_time:=true
-ros2 launch fra532_lab1_part1 ekf_odometry.launch.py use_sim_time:=true
-
-# Terminal 2: Play bag file with clock and QoS overrides
-ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
-    --clock \
-    --qos-profile-overrides-path qos_overrides.yaml \
-    --rate 1.0
-```
 
 **Available Dataset Sequences:**
 - `fibo_floor3_seq00` - Empty hallway
@@ -134,19 +205,6 @@ EKF updates (20 Hz)─┐                        └─→ ICP Process Step
                                                   └─ Publish /icp_odom
 ```
 
-### How to Run
-```bash
-# Terminal 1: Start ICP with mapping and visualization
-ros2 launch fra532_lab1_part2 icp_with_rviz.launch.py use_sim_time:=true
-ros2 launch fra532_lab1_part2 icp_with_mapping.launch.py use_sim_time:=true
-
-# Terminal 2: Play bag file with clock and QoS overrides
-ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
-    --clock \
-    --qos-profile-overrides-path qos_overrides.yaml \
-    --rate 1.0
-```
-
 **Available Dataset Sequences:**
 - `fibo_floor3_seq00` - Empty hallway
 - `fibo_floor3_seq01` - Hallway with obstacles & sharp turns
@@ -182,22 +240,6 @@ ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
 - ✅ Graph optimization (Ceres solver)
 - ✅ Dynamic vs static SLAM modes
 - ✅ Pose graph visualization
-
-### How to Run
-```bash
-# Terminal 1: Start SLAM with visualization
-ros2 launch fra532_lab1_part3 slam_with_rviz.launch.py use_sim_time:=true
-ros2 launch fra532_lab1_part3 slam.launch.py use_sim_time:=true
-
-# Terminal 2 (optional): Start SLAM evaluator
-ros2 run fra532_lab1_part3 slam_evaluator
-
-# Terminal 3: Play bag file with clock and QoS overrides
-ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
-    --clock \
-    --qos-profile-overrides-path qos_overrides.yaml \
-    --rate 1.0
-```
 
 **Available Dataset Sequences:**
 - `fibo_floor3_seq00` - Empty hallway
@@ -236,14 +278,6 @@ python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq00 rosbag_seq0
 # This generates CSV files in rosbag_seq0/ directory
 ```
 
-### Trajectory Plotting
-```bash
-# Generate trajectory comparison plots
-python3 ./src/plot.py
-
-# Output: PNG plots saved to current directory
-```
-
 ### Jupyter Notebook: plot.ipynb
 The notebook provides comprehensive trajectory visualization and analysis:
 - **Plot 1:** XY trajectory comparison (all methods overlaid)
@@ -261,135 +295,6 @@ The notebook provides comprehensive trajectory visualization and analysis:
 
 ---
 
-## Visualization Configurations
-
-### RViz Config Files
-Located in `config/`:
-
-| Config File | Purpose | Topics |
-|------------|---------|--------|
-| `wheel_odom_viz.rviz` | Wheel odometry baseline | `/joint_states`, `/wheel_odom` |
-| `ekf_odom_viz_clean.rviz` | EKF visualization | `/ekf_odom`, TF frames |
-| `icp_odom_viz.rviz` | ICP + mapping | `/icp_odom`, `/icp_map` |
-| `slam_viz.rviz` | Full SLAM | `/map`, `/slam_toolbox/*` |
-| `lab1_slam.rviz` | Comparison view | All odometry + maps |
-
-### Launching RViz
-```bash
-rviz2 -d config/icp_odom_viz.rviz
-```
-
----
-
-## Expected Results & Metrics
-
-### Sequence 0: Empty Hallway
-- **Distance traveled:** ~20 m
-- **Turning:** Minimal
-- **EKF drift:** ~0.5-1.0 m over full trajectory
-- **ICP correction:** Minimal (low feature matching opportunities)
-- **Best performer:** Wheel odometry (simplest environment)
-
-### Sequence 1: Hallway with Obstacles & Sharp Turns  
-- **Distance traveled:** ~25 m
-- **Turning:** Multiple sharp 90° turns
-- **EKF drift:** ~1-2 m (challenges with rapid heading changes)
-- **ICP refinement:** Significant (features improve scan matching)
-- **Best performer:** SLAM (loop closure handles sharp turns)
-
-### Sequence 2: Hallway with Obstacles & Smooth Motion
-- **Distance traveled:** ~15 m
-- **Turning:** Gentle curves
-- **EKF drift:** ~0.3-0.5 m (smooth motion aids filtering)
-- **ICP refinement:** Moderate (good feature quality)
-- **Best performer:** ICP or SLAM (smooth motion = stable matching)
-
-### Error Metrics
-Each method should be evaluated on:
-- **ATE (Absolute Trajectory Error):** RMS position error vs ground truth
-- **RPE (Relative Pose Error):** Consistency between consecutive poses
-- **Drift Rate:** Error accumulation per meter traveled
-- **Computation Time:** CPU/memory usage during processing
-
----
-
-## How to Generate Complete Deliverables
-
-### Step 1: Build All Packages
-```bash
-colcon build
-source install/setup.bash
-```
-
-All three packages (Part 1, 2, 3) will be built with a single command.
-
-### Step 2: Extract Data from Bags (Optional)
-```bash
-python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq00 rosbag_seq0
-python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq01 rosbag_seq1
-python3 ros2bag_to_csv.py FRA532_LAB1_DATASET/fibo_floor3_seq02 rosbag_seq2
-```
-
-This pre-extracts CSV data for analysis (optional; data can also be logged during runtime)
-
-### Step 3: Run Parts to Generate Odometry
-
-**For Part 1 (EKF):**
-```bash
-# Terminal 1: Start EKF
-ros2 launch fra532_lab1_part1 wheel_odom_with_rviz.launch.py use_sim_time:=true
-ros2 launch fra532_lab1_part1 ekf_odometry.launch.py use_sim_time:=true
-
-# Terminal 2: Play bag file
-ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
-    --clock \
-    --qos-profile-overrides-path qos_overrides.yaml \
-    --rate 1.0
-```
-
-**For Part 2 (ICP):**
-```bash
-# Terminal 1: Start ICP with mapping
-ros2 launch fra532_lab1_part2 icp_with_rviz.launch.py use_sim_time:=true
-ros2 launch fra532_lab1_part2 icp_with_mapping.launch.py use_sim_time:=true
-
-# Terminal 2: Play bag file
-ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
-    --clock \
-    --qos-profile-overrides-path qos_overrides.yaml \
-    --rate 1.0
-```
-
-**For Part 3 (SLAM):**
-```bash
-# Terminal 1: Start SLAM
-ros2 launch fra532_lab1_part3 slam_with_rviz.launch.py use_sim_time:=true
-ros2 launch fra532_lab1_part3 slam.launch.py use_sim_time:=true
-
-# Terminal 2 (optional): Start evaluator
-ros2 run fra532_lab1_part3 slam_evaluator
-
-# Terminal 3: Play bag file
-ros2 bag play FRA532_LAB1_DATASET/fibo_floor3_seq00/ \
-    --clock \
-    --qos-profile-overrides-path qos_overrides.yaml \
-    --rate 1.0
-```
-
-### Step 4: Generate Plots
-```bash
-python3 ./src/plot.py
-```
-
-This generates trajectory comparison plots showing all odometry methods overlaid.
-
-### Step 5: Analyze Results
-- Compare drift across methods
-- Discuss strengths/weaknesses
-- Document tuning decisions (Q, R matrices, ICP parameters)
-
----
-
 ## File Summary
 
 ### Configuration Files (Tunable Parameters)
@@ -398,15 +303,6 @@ This generates trajectory comparison plots showing all odometry methods overlaid
 | `src/fra532_lab1_part1/config/ekf_params.yaml` | EKF noise covariances (Q, R) |
 | `src/fra532_lab1_part2/config/icp_params.yaml` | ICP iterations, convergence threshold |
 | `qos_overrides.yaml` | ROS2 QoS settings (reliability, history) |
-
-### Generated Output Directories
-| Directory | Contents |
-|-----------|----------|
-| `rosbag_seq{0,1,2}/` | Extracted CSV data from bags |
-| `trajectory_comparison/` | PNG plots from analysis |
-| `build/` | Colcon build artifacts |
-| `install/` | Installed packages |
-| `log/` | ROS2 build logs |
 
 ---
 
@@ -426,43 +322,6 @@ Before submission, ensure:
 
 ---
 
-## Submission Requirements
-
-### Individual Work (Parts 1 & 2)
-Students must submit:
-1. Source code (`src/fra532_lab1_part1/` and `src/fra532_lab1_part2/`)
-2. README with implementation notes
-3. CSV data from all three sequences
-4. Trajectory comparison plots
-5. Analysis of accuracy/drift for each method
-6. Parameter tuning documentation
-
-### Group Work (Part 3)
-Teams must submit:
-1. Part 3 source code (`src/fra532_lab1_part3/`)
-2. SLAM launch files and configuration
-3. Generated maps from slam_toolbox
-4. Complete trajectory comparison including SLAM
-5. Group discussion of loop closure performance
-
-### File Organization
-```
-submission/
-├── src/fra532_lab1_part1/
-├── src/fra532_lab1_part2/
-├── src/fra532_lab1_part3/ (group)
-├── rosbag_seq0/
-├── rosbag_seq1/
-├── rosbag_seq2/
-├── trajectory_comparison/
-├── plot.ipynb
-├── analyze_trajectories.py
-├── ANALYSIS.md (results & discussion)
-└── README.md (overview)
-```
-
----
-
 ## References & Resources
 
 - **ROS2 Documentation:** https://docs.ros.org/en-foxy/
@@ -474,4 +333,3 @@ submission/
 ---
 
 **Last Updated:** February 15, 2026  
-**Lab Version:** FRA532 LAB1 v2.0
